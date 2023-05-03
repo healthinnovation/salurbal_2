@@ -60,17 +60,70 @@ gbmt_collect_clean <- gbmt_collect %>%
 
 ```{r}
 calculate_OCC <- function(model) {
+  num_groups <- length(model$appa)
+
+  # Si el modelo tiene solo un grupo, devolver 999.0
+  if (num_groups == 1) {
+    return(999.0)
+  }
+
   # Encontrar el grupo asignado para cada observación según la máxima probabilidad posterior
   assigned_groups <- apply(model$posterior, 1, which.max)
-  
-  # Calcular la suma de las probabilidades posteriores de las asignaciones de grupo correctas
-  sum_correct_probs <- sum(model$posterior[cbind(1:length(assigned_groups), assigned_groups)])
-  
-  # Calcular el OCC
-  OCC <- sum_correct_probs / length(assigned_groups)
-  
-  return(OCC)
+
+  # Calcular la proporción de población estimada para cada grupo
+  population_proportion <- table(assigned_groups) / length(assigned_groups)
+
+  # Calcular el OCC para cada grupo
+  OCC <- sapply(1:num_groups, function(j) {
+    # Si APPA es igual a 1, devolver 999.0
+    if (model$appa[j] == 1) {
+      return(999.0)
+    }
+
+    odds_correct <- model$appa[j] / (1 - model$appa[j])
+    odds_random <- population_proportion[j] / (1 - population_proportion[j])
+    return(odds_correct / odds_random)
+  })
+
+  # Devolver el promedio de OCC
+  return(mean(OCC))
 }
+
+calculate_mismatch <- function(model) {
+  # Calcular las proporciones de cada grupo estimadas por el modelo
+  group_proportions <- model$prior
+
+  # Calcular las proporciones reales de cada grupo en la muestra
+  real_proportions <- table(factor(model$assign, levels = 1:length(group_proportions))) / length(model$assign)
+
+  # Calcular el Mismatch para cada grupo
+  mismatch <- group_proportions - real_proportions
+
+  # Devolver el promedio de los valores absolutos de Mismatch de todos los grupos
+  return(mean(abs(mismatch)))
+}
+
+calculate_SD_GMP <- function(model) {
+  # Inicializar un vector para almacenar el SD-GMP para cada grupo
+  sd_gmp <- numeric(length(model$prior))
+
+  # Calcular el SD-GMP para cada grupo
+  for (j in 1:length(model$prior)) {
+    assigned_indices <- which(model$assign == j)
+    group_probs <- model$posterior[assigned_indices, j]
+    sd_gmp[j] <- sd(group_probs)
+  }
+
+  # Devolver la media de los SD-GMP de todos los grupos
+  return(mean(sd_gmp))
+}
+
+
+gbmt_collect_clean$gbmt_out[[2]]$appa
+table(gbmt_collect_clean$gbmt_out[[2]]$assign)
+
+1/(1-1)
+
 ```
 
 
@@ -81,20 +134,105 @@ gbmt_fit_total <- gbmt_collect_clean %>%
     BIC = map_dbl(gbmt_out, BIC),
     L = map_dbl(gbmt_out, logLik),
     APPA = map_dbl(gbmt_out, ~mean(.$appa)),
-    Mismatch = map_dbl(gbmt_out, ~mean(1 - .$appa)),
-    SD = map_dbl(gbmt_out, ~ mean(sqrt(diag(.$Sigma[[1]])))),
+    Mismatch = map_dbl(gbmt_out, calculate_mismatch),
+    SD_GMP = map_dbl(gbmt_out, calculate_SD_GMP),
     OCC = map_dbl(gbmt_out, calculate_OCC),
     smallest_group = map2_dbl(gbmt_out, ng,
                              ~min(table(factor(.x$assign, levels = 1:.y))) /
                                sum(table(factor(.x$assign, levels = 1:.y))))
   ) %>% 
   select(-data)
+
+gbmt_fit_total
 ```
 
 
 ```{r}
-gbmt_fit_d3_scale2 <- gbmt_fit_total %>% 
-  filter(d == 3, scale == 2)
+gbmt_fit_d3_scale2 <- gbmt_fit_total %>%
+  filter(d == 3, scale == 2) %>%
+  arrange(ng)
+gbmt_fit_d3_scale2
+```
+
+
+```{r}
+p2 <- ggplot(data, aes(x = ng)) +
+  geom_line(aes(y = AIC, color = "AIC")) +
+  geom_line(aes(y = BIC, color = "BIC")) +
+  geom_line(aes(y = L, color = "L")) +
+  labs(y = "AIC, BIC & L") +
+  scale_color_manual(values = c("AIC" = "blue", "BIC" = "red", "L" = "green")) +
+  scale_x_continuous(breaks = seq(1, 10, 1)) +
+  theme_minimal()
+p2
+
+
+p3 <- ggplot(data, aes(x = ng)) +
+  geom_line(aes(y = APPA, color = "APPA")) +
+  geom_line(aes(y = Mismatch, color = "Mismatch")) +
+  geom_line(aes(y = SD_GMP, color = "SD_GMP")) +
+  labs(y = "APPA, Mismatch & SD_GMP") +
+  scale_color_manual(values = c("APPA" = "blue", "Mismatch" = "red", "SD_GMP" = "green")) +
+  scale_x_continuous(breaks = seq(1, 10, 1)) +
+  theme_minimal()
+p3
+
+
+p4 <- ggplot(data, aes(x = ng, y = OCC)) +
+  geom_line() +
+  labs(y = "OCC") +
+  scale_x_continuous(breaks = seq(1, 10, 1)) +
+  theme_minimal()
+p4
+
+
+p5 <- ggplot(data, aes(x = ng, y = smallest_group)) +
+  geom_line() +
+  labs(y = "% Individuals in Smallest Group") +
+  scale_x_continuous(breaks = seq(1, 10, 1)) +
+  theme_minimal()
+p5
+```
+
+
+```{r}
+ggsave("02_output/plots/F-CAP-AIC_BIC_L.png",
+  p2,
+  dpi = 400, bg = "white"
+)
+
+ggsave("02_output/plots/F-CAP-Fit-APPA_mismatch_sd.png",
+  p3,
+  dpi = 400, bg = "white"
+)
+ggsave("02_output/plots/F-CAP-Fit-OCC.png",
+  p4,
+  dpi = 400, bg = "white"
+)
+
+ggsave("02_output/plots/F-CAP-Fit-smallest_group.png",
+  p5,
+  dpi = 400, bg = "white"
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+table(gbmt_fit_d3_scale2$gbmt_out[[1]]$assign)
+
+gbmt_fit_d3_scale2$gbmt_out[[1]]$posterior
+
+gbmt_fit_d3_scale2$gbmt_out[[1]] %>%
+  summary()
 ```
 
 
