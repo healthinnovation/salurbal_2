@@ -1,5 +1,5 @@
 ---
-title: "Trajectory Analysis"
+title: "Trajectory Analysis - I"
 author:
   - name: Brian Peña-Calero
     email: brian.pena@upch.pe
@@ -37,6 +37,7 @@ knitr::opts_chunk$set(
 ```{r}
 library(tidyverse)
 library(gbmt)
+library(multidplyr)
 ```
 
 
@@ -48,7 +49,7 @@ pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal.rds")
 ```
 
 
-# Analysis
+# Format
 
 ```{r}
 pop_bectuareal <- pop_bectuareal %>% 
@@ -56,31 +57,69 @@ pop_bectuareal <- pop_bectuareal %>%
   as.data.frame()
 ```
 
+# Analysis
+
+Settings:
+```{r}
+cluster <- new_cluster(parallel::detectCores())
+cluster_library(cluster, c("dplyr", "purrr", "gbmt"))
+gbmt_safe <- safely(.f = gbmt)
+cluster_copy(cluster, "gbmt_safe")
+```
+
 
 ```{r}
-pop_bectuareal_gbmt <- gbmt(
-  x.names = c("Population", "BECTUAREAL1AD"), 
-  unit = "SALID1", 
-  time = "YEAR", 
-  d = 2, ng = 4, 
-  data = as.data.frame(pop_bectuareal), 
-  scaling = 4
-)
+gbmt_matrix <- expand_grid(
+  d = 1:4,
+  ng = 1:10,
+  scale = 0:4
+) %>% 
+  mutate(data = list(pop_bectuareal))
 ```
 
 ```{r}
-summary(pop_bectuareal_gbmt)
+gbmt_outputs <- gbmt_matrix %>% 
+  partition(cluster) %>% 
+  mutate(
+    gbmt_out = pmap(
+      list(data, d, ng, scale),
+      ~ gbmt_safe(
+          x.names = c("Population", "BECTUAREAL1AD"), 
+          unit = "SALID1", 
+          time = "YEAR",
+          data = as.data.frame(..1),
+          d = ..2,
+          ng = ..3,
+          scaling = ..4
+      )
+    )
+  )
+
+gbmt_collect <- gbmt_outputs %>% 
+  collect()
 ```
 
-Se identificaron cuatro grupos diferentes en el análisis de trayectorias. Cada grupo tiene diferentes características de cambio a lo largo del tiempo en las variables de respuesta "Population" y "BECTUAREAL1AD". Los coeficientes de los términos de tiempo lineal (I(t^1)) y cuadrático (I(t^2)) describen cómo cambian las variables de respuesta a lo largo del tiempo para cada grupo.
+```{r}
+saveRDS(gbmt_collect,
+        file = "01_data/processed/gbmt_collect.rds")
+```
 
-Grupo 1: Este grupo tiene 202 unidades y un APPA (Average Posterior Probability of Assignment) de 0.9681, lo que indica una alta probabilidad de que las unidades pertenezcan a este grupo. La población en este grupo disminuye en general a lo largo del tiempo (coeficiente negativo para I(t^1)), pero a una tasa decreciente (coeficiente negativo para I(t^2)). La variable BECTUAREAL1AD también disminuye a lo largo del tiempo, pero a una tasa decreciente.
 
-Grupo 2: Este grupo tiene 47 unidades y un APPA de 0.8137. La población en este grupo se mantiene relativamente constante a lo largo del tiempo, con un coeficiente muy pequeño para I(t^1) y ningún cambio en la tasa de crecimiento (I(t^2) igual a 0). La variable BECTUAREAL1AD disminuye a lo largo del tiempo, pero a una tasa decreciente.
 
-Grupo 3: Este grupo tiene 319 unidades y un APPA de 0.9717, lo que indica una alta probabilidad de que las unidades pertenezcan a este grupo. La población en este grupo disminuye a lo largo del tiempo, pero a una tasa decreciente. La variable BECTUAREAL1AD también disminuye a lo largo del tiempo, pero a una tasa decreciente.
 
-Grupo 4: Este grupo tiene 80 unidades y un APPA de 0.9596, lo que indica una alta probabilidad de que las unidades pertenezcan a este grupo. La población en este grupo disminuye a lo largo del tiempo, pero a una tasa decreciente. La variable BECTUAREAL1AD disminuye a lo largo del tiempo, pero a una tasa decreciente.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -90,7 +129,7 @@ predicted_means <- predict(pop_bectuareal_gbmt)
 predicted_means_f <- map(predicted_means,
     ~ map(., ~ as_tibble(., rownames = "Year"))) %>% 
   bind_rows(.id = "Cluster") %>% 
-  unpack(c(Population, BECTUAREAL1AD),
+  tidyr::unpack(c(Population, BECTUAREAL1AD),
          names_sep = "_") %>% 
   mutate(
     across(c(Population_Year, BECTUAREAL1AD_Year),
@@ -148,7 +187,7 @@ plot_predicted_means_f2 <- predicted_means_f %>%
       color = Cluster
     )
   ) +
-  geom_line(size = 2) +
+  geom_line(size = 1) +
   #geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha = 0.05) +
   scale_x_continuous(
     breaks = seq(1985, 2015, 5)
@@ -163,6 +202,21 @@ ggsave("02_output/plots/predicted_means_f2.png",
        bg = "white")
 ```
 
+```{r}
+predicted_means_f %>% 
+  filter(Variable == "BECTUAREAL1AD",
+         Cluster %in% c("1", "2", "3")) %>% 
+  ggplot(
+    aes(
+      x = Year,
+      y = mean,
+      group = Cluster,
+      color = Cluster
+    )
+  ) +
+  geom_point()
+  geom_line()
+```
 
 
 
