@@ -151,7 +151,19 @@ gbmt_fit_total
 gbmt_fit_d3_scale2 <- gbmt_fit_total %>%
   filter(d == 3, scale == 2) %>%
   arrange(ng)
-gbmt_fit_d3_scale2
+gbmt_fit_d2_scale2 <- gbmt_fit_total %>%
+  filter(d == 2, scale == 2) %>%
+  arrange(ng)
+
+
+gbmt_fit_d3_scale2 %>%
+  select(-gbmt_out) %>%
+  openxlsx::write.xlsx(file = "02_output/tables/fit_measures_d3_scale2.xlsx")
+
+gbmt_fit_d2_scale2 %>%
+  select(-gbmt_out) %>%
+  openxlsx::write.xlsx(file = "02_output/tables/fit_measures_d2_scale2.xlsx")
+
 ```
 
 
