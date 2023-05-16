@@ -312,6 +312,17 @@ for (i in seq_len(nrow(gbmt_fit_total_plot2))) {
       height = 5
     )
 }
+
+for (i in seq_len(nrow(gbmt_fit_total_plot2))) {
+    ggsave(
+      filename = paste0("02_output/plots/Multiple plots/Con IC/", gbmt_fit_total_plot2$type[i], ".png"),
+      plot = gbmt_fit_total_plot2$plot_ic[[i]],
+      bg = "white",
+      dpi = 300,
+      width = 8,
+      height = 5
+    )
+}
 ```
 
 
@@ -354,6 +365,10 @@ anim_total <- gbmt_fit_total_predict %>%
 animation <- animate(anim_total, nframes = 1600, fps = 30, width = 1280, 
                      height = 720, res = 144,
                      renderer = ffmpeg_renderer(format = "mp4"))  # crea la animación con alta calidad
+
+animation2 <- animate(anim_total, duration = 320, fps = 10, width = 1280, 
+                     height = 720, res = 144,
+                     renderer = ffmpeg_renderer())
 
 anim_save("animation.mp4", animation)  # guarda la animación como un archivo MP4
 
