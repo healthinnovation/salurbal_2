@@ -45,7 +45,7 @@ library(multidplyr)
 # Import data
 
 ```{r}
-pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal.rds")
+pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal1ux.rds")
 ```
 
 
@@ -70,9 +70,9 @@ cluster_copy(cluster, "gbmt_safe")
 
 ```{r}
 gbmt_matrix <- expand_grid(
-  d = 1:4,
-  ng = 1:10,
-  scale = 0:4
+  d = 1:2,
+  ng = 1:5,
+  scale = 1:4
 ) %>% 
   mutate(data = list(pop_bectuareal))
 ```
@@ -84,7 +84,7 @@ gbmt_outputs <- gbmt_matrix %>%
     gbmt_out = pmap(
       list(data, d, ng, scale),
       ~ gbmt_safe(
-          x.names = c("Population", "BECTUAREAL1AD"), 
+          x.names = c("Population", "BECTUAREAL1UX"), 
           unit = "SALID1", 
           time = "YEAR",
           data = as.data.frame(..1),
@@ -101,6 +101,6 @@ gbmt_collect <- gbmt_outputs %>%
 
 ```{r}
 saveRDS(gbmt_collect,
-        file = "01_data/processed/gbmt_collect.rds")
+        file = "01_data/processed/gbmt_collect_ux.rds")
 ```
 
