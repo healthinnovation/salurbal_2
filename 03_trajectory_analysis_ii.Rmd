@@ -37,13 +37,12 @@ knitr::opts_chunk$set(
 ```{r}
 library(tidyverse)
 library(gbmt)
-#library(multidplyr)
 ```
 
 # Import data
 
 ```{r}
-gbmt_collect <- readRDS("01_data/processed/gbmt_collect.rds")
+gbmt_collect <- readRDS("01_data/processed/gbmt_collect_ux.rds")
 ```
 
 ```{r}
@@ -133,7 +132,8 @@ gbmt_fit_total <- gbmt_collect_clean %>%
     smallest_group = map2_dbl(gbmt_out, ng,
                              ~min(table(factor(.x$assign, levels = 1:.y))) /
                                sum(table(factor(.x$assign, levels = 1:.y))))
-  )
+  ) %>% 
+  arrange(d, ng, scale)
 
 gbmt_fit_total
 ```
@@ -158,6 +158,10 @@ gbmt_fit_d2_scale2 %>%
 
 ```
 
+```{r}
+data <- gbmt_fit_total 
+```
+
 
 ```{r}
 p2 <- ggplot(data, aes(x = ng)) +
@@ -167,7 +171,8 @@ p2 <- ggplot(data, aes(x = ng)) +
   labs(y = "AIC, BIC & L") +
   scale_color_manual(values = c("AIC" = "blue", "BIC" = "red", "L" = "green")) +
   scale_x_continuous(breaks = seq(1, 10, 1)) +
-  theme_minimal()
+  theme_minimal() +
+  facet_grid(vars(d), vars(scale))
 p2
 
 
@@ -178,7 +183,8 @@ p3 <- ggplot(data, aes(x = ng)) +
   labs(y = "APPA, Mismatch & SD_GMP") +
   scale_color_manual(values = c("APPA" = "blue", "Mismatch" = "red", "SD_GMP" = "green")) +
   scale_x_continuous(breaks = seq(1, 10, 1)) +
-  theme_minimal()
+  theme_minimal() +
+  facet_grid(vars(d), vars(scale))
 p3
 
 
@@ -186,7 +192,9 @@ p4 <- ggplot(data, aes(x = ng, y = OCC)) +
   geom_line() +
   labs(y = "OCC") +
   scale_x_continuous(breaks = seq(1, 10, 1)) +
-  theme_minimal()
+  scale_y_continuous(limits = c(0, 999)) +
+  theme_minimal() +
+  facet_grid(vars(d), vars(scale))
 p4
 
 
@@ -194,28 +202,41 @@ p5 <- ggplot(data, aes(x = ng, y = smallest_group)) +
   geom_line() +
   labs(y = "% Individuals in Smallest Group") +
   scale_x_continuous(breaks = seq(1, 10, 1)) +
-  theme_minimal()
+  theme_minimal() + 
+  facet_grid(vars(d), vars(scale))
 p5
 ```
 
+```{r}
+library(patchwork)
+
+p_total <- (p2 + p4) / (p3 + p5)
+```
 
 ```{r}
-ggsave("02_output/plots/F-CAP-AIC_BIC_L.png",
-  p2,
-  dpi = 400, bg = "white"
-)
-
-ggsave("02_output/plots/F-CAP-Fit-APPA_mismatch_sd.png",
-  p3,
-  dpi = 400, bg = "white"
-)
-ggsave("02_output/plots/F-CAP-Fit-OCC.png",
-  p4,
-  dpi = 400, bg = "white"
-)
-
-ggsave("02_output/plots/F-CAP-Fit-smallest_group.png",
-  p5,
+# ggsave("02_output/plots/F-CAP-AIC_BIC_L.png",
+#   p2,
+#   dpi = 400, bg = "white"
+# )
+# 
+# ggsave("02_output/plots/F-CAP-Fit-APPA_mismatch_sd.png",
+#   p3,
+#   dpi = 400, bg = "white"
+# )
+# ggsave("02_output/plots/F-CAP-Fit-OCC.png",
+#   p4,
+#   dpi = 400, bg = "white"
+# )
+# 
+# ggsave("02_output/plots/F-CAP-Fit-smallest_group.png",
+#   p5,
+#   dpi = 400, bg = "white"
+# )
+# 
+ggsave("02_output/plots/F-CAP-Fit.png",
+  p_total,
+  width = 10,
+  height = 5.5,
   dpi = 400, bg = "white"
 )
 ```
@@ -230,10 +251,10 @@ gbmt_fit_total_predict <- gbmt_fit_total %>%
     predict_values = map(predict_values,
                          ~ map(., ~map(., ~ as_tibble(., rownames = "Year"))) %>% 
                            bind_rows(.id = "Cluster") %>% 
-                           tidyr::unpack(c(Population, BECTUAREAL1AD),
+                           tidyr::unpack(c(Population, BECTUAREAL1UX),
                                          names_sep = "_") %>% 
                            mutate(
-                             across(c(Population_Year, BECTUAREAL1AD_Year),
+                             across(c(Population_Year, BECTUAREAL1UX_Year),
                                     as.numeric)
                            ) %>% 
                            pivot_longer(
@@ -250,16 +271,17 @@ gbmt_fit_total_predict <- gbmt_fit_total %>%
                              cols = c(Year, mean, `2.5%`, `97.5%`)
                            )),
     type_scaling = case_match(scale,
-                              0 ~ "no normalisation",
+                              # 0 ~ "no normalisation",
                               1 ~ "centering",
                               2 ~ "standardization",
                               3 ~ "ratio to the mean",
                               4 ~ "logarithmic ratio to the mean"),
     type_polynomial = case_match(d,
                                  1 ~ "lineal (d = 1)",
-                                 2 ~ "quadratic (d = 2)",
-                                 3 ~ "cubic (d = 3)",
-                                 4 ~ "quartic (d = 4)")
+                                 2 ~ "quadratic (d = 2)"
+                                 # 3 ~ "cubic (d = 3)",
+                                 # 4 ~ "quartic (d = 4)"
+                                 )
   )
 ```
 
@@ -327,113 +349,63 @@ for (i in seq_len(nrow(gbmt_fit_total_plot2))) {
 
 
 ```{r}
-library(gganimate)
+# library(gganimate)
 ```
 
 
 ```{r}
-anim_total <- gbmt_fit_total_predict %>%
-  filter(scale != 0) %>% 
-  mutate(
-    type = paste0(type_polynomial, " - cluster = ", ng,
-                  ", ", type_scaling)
-  ) %>% 
-  select(type, predict_values) %>% 
-  unnest(cols = c(predict_values)) %>% 
-  ggplot(aes(
-           x = Year,
-           y = mean,
-           group = Cluster,
-           color = Cluster
-         )) +
-  geom_line(linewidth = 2) +
-  scale_x_continuous(
-    breaks = seq(1985, 2015, 5)
-  ) +
-  facet_wrap(vars(Variable)) +
-  labs(
-    title = paste0('Tipo de modelo: {closest_state}')
-  ) +
-  theme_minimal() +
-  transition_states(type,
-                    transition_length = 4,
-                    state_length = 12) +
-  enter_fade() + 
-  exit_recolour() +
-  ease_aes('sine-in-out')
-
-animation <- animate(anim_total, nframes = 1600, fps = 30, width = 1280, 
-                     height = 720, res = 144,
-                     renderer = ffmpeg_renderer(format = "mp4"))  # crea la animación con alta calidad
-
-animation2 <- animate(anim_total, duration = 320, fps = 10, width = 1280, 
-                     height = 720, res = 144,
-                     renderer = ffmpeg_renderer())
-
-anim_save("animation.mp4", animation)  # guarda la animación como un archivo MP4
-
+# anim_total <- gbmt_fit_total_predict %>%
+#   filter(scale != 0) %>% 
+#   mutate(
+#     type = paste0(type_polynomial, " - cluster = ", ng,
+#                   ", ", type_scaling)
+#   ) %>% 
+#   select(type, predict_values) %>% 
+#   unnest(cols = c(predict_values)) %>% 
+#   ggplot(aes(
+#            x = Year,
+#            y = mean,
+#            group = Cluster,
+#            color = Cluster
+#          )) +
+#   geom_line(linewidth = 2) +
+#   scale_x_continuous(
+#     breaks = seq(1985, 2015, 5)
+#   ) +
+#   facet_wrap(vars(Variable)) +
+#   labs(
+#     title = paste0('Tipo de modelo: {closest_state}')
+#   ) +
+#   theme_minimal() +
+#   transition_states(type,
+#                     transition_length = 4,
+#                     state_length = 12) +
+#   enter_fade() + 
+#   exit_recolour() +
+#   ease_aes('sine-in-out')
+# 
+# animation <- animate(anim_total, nframes = 1600, fps = 30, width = 1280, 
+#                      height = 720, res = 144,
+#                      renderer = ffmpeg_renderer(format = "mp4"))  # crea la animación con alta calidad
+# 
+# animation2 <- animate(anim_total, duration = 320, fps = 5, width = 1280, 
+#                      height = 720, res = 144)
+# 
+# anim_save("animation.gif", animation)  # guarda la animación como un archivo MP4
+# 
 
 ```
 
 ```{r}
-ggplot(mtcars, aes(factor(cyl), mpg)) + 
-  geom_boxplot() + 
-  # Here comes the gganimate code
-  transition_states(
-    gear,
-    transition_length = 2,
-    state_length = 1
-  ) +
-  enter_fade() + 
-  exit_shrink() +
-  ease_aes('sine-in-out')
+# ggplot(mtcars, aes(factor(cyl), mpg)) + 
+#   geom_boxplot() + 
+#   # Here comes the gganimate code
+#   transition_states(
+#     gear,
+#     transition_length = 2,
+#     state_length = 1
+#   ) +
+#   enter_fade() + 
+#   exit_shrink() +
+#   ease_aes('sine-in-out')
 ```
-
-
-
-
-
-
-
-
-
-```{r}
-
-
-ggsave("02_output/plots/predicted_means_f.png",
-       plot_predicted_means_f,
-       dpi = 400,
-       bg = "white")
-
-plot(pop_bectuareal_gbmt)
-coef(pop_bectuareal_gbmt)
-```
-
-
-```{r}
-plot_predicted_means_f2 <- predicted_means_f %>% 
-  ggplot(
-    aes(
-      x = Year,
-      y = mean,
-      group = Cluster,
-      color = Cluster
-    )
-  ) +
-  geom_line(size = 1) +
-  #geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha = 0.05) +
-  scale_x_continuous(
-    breaks = seq(1985, 2015, 5)
-  ) +
-  facet_wrap(vars(Variable)) +
-  theme_minimal()
-
-
-ggsave("02_output/plots/predicted_means_f2.png",
-       plot_predicted_means_f2,
-       dpi = 400,
-       bg = "white")
-```
-
-
-
