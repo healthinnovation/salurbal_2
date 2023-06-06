@@ -347,65 +347,160 @@ for (i in seq_len(nrow(gbmt_fit_total_plot2))) {
 }
 ```
 
+# Absolute & Relative Population
 
 ```{r}
-# library(gganimate)
-```
+extract <- function(gbmt) {
+  gbmt$assign
+}
 
-
-```{r}
-# anim_total <- gbmt_fit_total_predict %>%
-#   filter(scale != 0) %>% 
-#   mutate(
-#     type = paste0(type_polynomial, " - cluster = ", ng,
-#                   ", ", type_scaling)
-#   ) %>% 
-#   select(type, predict_values) %>% 
-#   unnest(cols = c(predict_values)) %>% 
-#   ggplot(aes(
-#            x = Year,
-#            y = mean,
-#            group = Cluster,
-#            color = Cluster
-#          )) +
-#   geom_line(linewidth = 2) +
-#   scale_x_continuous(
-#     breaks = seq(1985, 2015, 5)
-#   ) +
-#   facet_wrap(vars(Variable)) +
-#   labs(
-#     title = paste0('Tipo de modelo: {closest_state}')
-#   ) +
-#   theme_minimal() +
-#   transition_states(type,
-#                     transition_length = 4,
-#                     state_length = 12) +
-#   enter_fade() + 
-#   exit_recolour() +
-#   ease_aes('sine-in-out')
-# 
-# animation <- animate(anim_total, nframes = 1600, fps = 30, width = 1280, 
-#                      height = 720, res = 144,
-#                      renderer = ffmpeg_renderer(format = "mp4"))  # crea la animación con alta calidad
-# 
-# animation2 <- animate(anim_total, duration = 320, fps = 5, width = 1280, 
-#                      height = 720, res = 144)
-# 
-# anim_save("animation.gif", animation)  # guarda la animación como un archivo MP4
-# 
-
+extract_imp <- function(gbmt) {
+  gbmt$data.imputed
+}
 ```
 
 ```{r}
-# ggplot(mtcars, aes(factor(cyl), mpg)) + 
-#   geom_boxplot() + 
-#   # Here comes the gganimate code
-#   transition_states(
-#     gear,
-#     transition_length = 2,
-#     state_length = 1
-#   ) +
-#   enter_fade() + 
-#   exit_shrink() +
-#   ease_aes('sine-in-out')
+gbmt_fit_total_predict2 <- gbmt_fit_total_predict %>% 
+  mutate(
+    # group = map(
+    #   gbmt_out,
+    #   ~ extract(.) %>%
+    #     enframe(
+    #       name = "SALID1",
+    #       value = "Group"
+    #     ) %>%
+    #     mutate(SALID1 = as.numeric(SALID1))
+    # )
+    data2 = map2(
+      data, gbmt_out,
+      ~ .x %>%
+        left_join(
+          extract(.y) %>%
+            enframe(
+              name = "SALID1",
+              value = "Group"
+            ) %>%
+            mutate(SALID1 = as.numeric(SALID1)),
+          by = join_by(SALID1)
+        ) %>%
+        mutate(Group = as.factor(Group))
+     )
+  )
+
+gbmt_fit_total_predict2 <- gbmt_fit_total_predict2 %>%
+  mutate(
+    pop_totals = map(
+      data2, 
+      ~ .x %>%
+        group_by(country, YEAR, Group) %>%
+        summarise(
+          total_pop = sum(Population, na.rm = TRUE)
+        ) %>%
+        mutate(
+          relative_pop = total_pop / sum(total_pop),
+          country = str_to_title(country)
+        ) %>%
+        ungroup()
+    ),
+    pop_mean_total = map(
+      data2, 
+      ~ .x %>%
+        group_by(YEAR, Group) %>%
+        summarise(
+          mean_pop = mean(Population, na.rm = TRUE)
+        )  %>%
+        ungroup()
+    ),
+  )
+```
+
+## Gráficos
+
+```{r}
+gbmt_fit_total_plot3 <- gbmt_fit_total_predict2 %>%
+  mutate(
+    pob_total_plot = pmap(
+      list(
+        pop_totals, type_polynomial,
+        ng, type_scaling
+      ),
+      ~ ggplot(
+        ..1, aes(x = YEAR, y = total_pop, color = Group)
+      ) +
+        geom_line() +
+        scale_y_continuous(labels = scales::comma) +
+        innovar::scale_color_innova("npr") +
+        facet_wrap(vars(country),
+          scales = "free_y"
+        ) +
+        scale_x_continuous(
+          breaks = seq(1985, 2015, 5)
+        ) +
+        labs(
+          title = str_wrap(paste0(
+            "Absolute Population ",
+            ..2, ", cluster number = ", ..3,
+            ", normalisation method: ", ..4
+          ), 120),
+          x = NULL,
+          y = "Total Population"
+        ) +
+        theme_minimal()
+    ),
+    pob_mean_plot = pmap(
+      list(
+        pop_mean_total, type_polynomial,
+        ng, type_scaling
+      ),
+      ~ ggplot(
+        ..1, aes(x = YEAR, y = mean_pop, color = Group)
+      ) +
+        geom_line() +
+        scale_y_continuous(labels = scales::comma) +
+        innovar::scale_color_innova("npr") +
+        scale_x_continuous(
+          breaks = seq(1985, 2015, 5)
+        ) +
+        labs(
+          title = str_wrap(paste0(
+            "Mean Population ",
+            ..2, ", cluster number = ", ..3,
+            ", normalisation method: ", ..4
+          ), 120),
+          x = NULL,
+          y = "Mean Population"
+        ) +
+        theme_minimal()
+    ),
+  )
+```
+
+```{r}
+gbmt_fit_total_plot3 <- gbmt_fit_total_plot3 %>% 
+  mutate(
+    type = paste0(type_polynomial, " - cluster = ", ng,
+                  ", ", type_scaling)
+  ) 
+
+for (i in seq_len(nrow(gbmt_fit_total_plot3))) {
+    ggsave(
+      filename = paste0("02_output/plots/Absolute Population/", gbmt_fit_total_plot3$type[i], ".png"),
+      plot = gbmt_fit_total_plot3$pob_total_plot[[i]],
+      bg = "white",
+      dpi = 300,
+      width = 14,
+      height = 7
+    )
+}
+
+for (i in seq_len(nrow(gbmt_fit_total_plot3))) {
+    ggsave(
+      filename = paste0("02_output/plots/Mean Population/", gbmt_fit_total_plot3$type[i], ".png"),
+      plot = gbmt_fit_total_plot3$pob_mean_plot[[i]],
+      bg = "white",
+      dpi = 300,
+      width = 8,
+      height = 5
+    )
+}
 ```
