@@ -107,48 +107,134 @@ population <- population %>%
   ungroup()
 ```
 
+# Data imputation
+
+```{r}
+population_tidy <- population %>%
+  janitor::clean_names() %>%
+  select(salid1, x1945:x2015) %>%
+  pivot_longer(
+    cols = x1945:x2015,
+    names_to = "year",
+    values_to = "population"
+  )
+```
+
+```{r}
+library(imputeTS)
+na_kalman_safe <- safely(.f = na_kalman)
+```
+
+```{r}
+population_imp <- population_tidy %>%
+  group_nest(salid1) %>%
+  mutate(
+    ts_data = map(
+      data,
+      ~ ts(.x$population, 1945, 2015) %>% 
+        log()
+    ),
+    kalman_data = map(
+      ts_data,
+      na_kalman_safe
+    )
+  )
+
+population_imp_errors <- population_imp %>% 
+  filter(map_lgl(.$kalman_data, ~ !is.null(.x$error)))
+
+population_imp_clean <- population_imp %>% 
+  filter(map_lgl(.$kalman_data, ~ is.null(.x$error))) %>% 
+  mutate(kalman_data = map(kalman_data, 'result'))
+```
+
+# Merge data
+
+```{r}
+population_imp_merge <- population_imp_clean %>% 
+  mutate(
+    kalman_data = map(kalman_data,
+                      ~ as_tibble(.x) %>% 
+                        mutate(
+                          x = exp(x),
+                          year = paste0("x", 1945:2015))
+                        ),
+    data_imputation = map2(data, kalman_data,
+                           ~ .x %>% 
+                             left_join(.y,
+                                       by = join_by(year)))
+  )
+
+population_imp_merge <- population_imp_merge %>% 
+  select(salid1, data_imputation) %>% 
+  unnest(cols = c(data_imputation)) %>% 
+  rename(population_imp = x)
+```
+
+# For bectu
+
+```{r}
+bectuareal_tidy <- bec_backcast_l1ux %>% 
+  distinct(SALID1) %>% 
+  crossing(YEAR = 1985:2015) %>% 
+  left_join(
+    bec_backcast_l1ux %>% 
+      select(SALID1, YEAR, BECTUAREAL1UX)
+  ) %>% 
+  janitor::clean_names()
+
+
+bectuareal_imp <- bectuareal_tidy %>%
+  group_nest(salid1) %>%
+  mutate(
+    ts_data = map(
+      data,
+      ~ ts(.x$bectuareal1ux, 1985, 2015)
+    ),
+    kalman_data = map(
+      ts_data,
+      na_kalman_safe
+    )
+  )
+
+bectuareal_imp_errors <- bectuareal_imp %>% 
+  filter(map_lgl(.$kalman_data, ~ !is.null(.x$error)))
+
+bectuareal_imp_clean <- bectuareal_imp %>% 
+  filter(map_lgl(.$kalman_data, ~ is.null(.x$error))) %>% 
+  mutate(kalman_data = map(kalman_data, 'result'))
+```
+
+```{r}
+bectuareal_imp_merge <- bectuareal_imp_clean %>% 
+  mutate(
+    kalman_data = map(kalman_data,
+                      ~ as_tibble(.x) %>% 
+                        mutate(
+                          year = 1985:2015)
+                        ),
+    data_imputation = map2(data, kalman_data,
+                           ~ .x %>% 
+                             left_join(.y,
+                                       by = join_by(year)))
+  )
+
+bectuareal_imp_merge <- bectuareal_imp_merge %>% 
+  select(salid1, data_imputation) %>% 
+  unnest(cols = c(data_imputation)) %>% 
+  rename(bectuareal1ux_imp = x)
+```
 
 # Merge info
 
 ```{r}
-library(mice)
-```
-
-
-```{r}
-pop_1950_2015_imp <- population %>% 
-  select(`1950`:`2015`) %>% 
-  janitor::clean_names() %>% 
-  mice(method = "rf",
-       maxit = 10,
-       seed = 2023,
-       threshold = 1.1)
-
-pop_1950_2015_imp <- complete(pop_1950_2015_imp) %>% 
-  select(-c(x1953, x1962)) %>% 
-  as_tibble()
-
-population_imp <- population %>% 
-  select(ISO2:City) %>% 
-  bind_cols(pop_1950_2015_imp) %>% 
-  pivot_longer(
-    cols = x1950:x2015,
-    names_to = "YEAR",
-    values_to = "Population"
+pop_bectuareal <- population_imp_merge %>% 
+  mutate(
+    year = str_remove(year, "x"),
+    year = as.numeric(year)
   ) %>% 
-  mutate(YEAR = str_remove(YEAR, "x"),
-         YEAR = as.numeric(YEAR))
+  inner_join(bectuareal_imp_merge)
 ```
-
-
-```{r}
-pop_bectuareal <- population_imp %>% 
-  left_join(
-    bec_backcast_l1ux %>% 
-      select(ISO2:SALID1, YEAR, BECTUAREAL1UX)
-  )
-```
-
 # Export data
 
 ```{r}
