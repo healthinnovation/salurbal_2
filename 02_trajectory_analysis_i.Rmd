@@ -40,8 +40,6 @@ library(gbmt)
 library(multidplyr)
 ```
 
-
-
 # Import data
 
 ```{r}
@@ -53,7 +51,8 @@ pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal1ux.rds")
 
 ```{r}
 pop_bectuareal <- pop_bectuareal %>% 
-  filter(YEAR >= 1985) %>% 
+  filter(year >= 1985) %>% 
+  select(-c(population, bectuareal1ux)) %>% 
   as.data.frame()
 ```
 
@@ -67,12 +66,11 @@ gbmt_safe <- safely(.f = gbmt)
 cluster_copy(cluster, "gbmt_safe")
 ```
 
-
 ```{r}
 gbmt_matrix <- expand_grid(
   d = 1:2,
-  ng = 1:5,
-  scale = 1:4
+  ng = 1:10,
+  scale = 1:2
 ) %>% 
   mutate(data = list(pop_bectuareal))
 ```
@@ -84,9 +82,9 @@ gbmt_outputs <- gbmt_matrix %>%
     gbmt_out = pmap(
       list(data, d, ng, scale),
       ~ gbmt_safe(
-          x.names = c("Population", "BECTUAREAL1UX"), 
-          unit = "SALID1", 
-          time = "YEAR",
+          x.names = c("population_imp", "bectuareal1ux_imp"), 
+          unit = "salid1", 
+          time = "year",
           data = as.data.frame(..1),
           d = ..2,
           ng = ..3,
@@ -101,6 +99,6 @@ gbmt_collect <- gbmt_outputs %>%
 
 ```{r}
 saveRDS(gbmt_collect,
-        file = "01_data/processed/gbmt_collect_ux.rds")
+        file = "01_data/processed/gbmt_collect_ux2.rds")
 ```
 
