@@ -126,26 +126,99 @@ na_kalman_safe <- safely(.f = na_kalman)
 ```
 
 ```{r}
+fix_population <- function(data, desviacion_max = 0.2) {
+  data_wo_na <- na.omit(data)
+  
+  if (length(data_wo_na) < 2) {
+    return(data)
+  }
+  
+  median_population <- median(data_wo_na)
+  
+  upper_limit <- median_population * (1 + desviacion_max)
+  lower_limit <- median_population * (1 - desviacion_max)
+  
+  data_fix <- ifelse(
+    !is.na(data) & (data > upper_limit | data < lower_limit), 
+    NA, 
+    data
+  )
+  
+  return(data_fix)
+  
+}
+```
+
+
+
+```{r}
 population_imp <- population_tidy %>%
   group_nest(salid1) %>%
   mutate(
-    ts_data = map(
+    # Fixing population number
+    pop_fix_0_20 = map(
       data,
-      ~ ts(.x$population, 1945, 2015) %>% 
-        log()
+      ~ fix_population(.x$population)
     ),
-    kalman_data = map(
-      ts_data,
-      na_kalman_safe
+    pop_fix_0_25 = map(
+      data,
+      ~ fix_population(.x$population, 0.25)
+    ),
+    across(
+      c(pop_fix_0_20, pop_fix_0_25),
+      ~ map(
+        .x, 
+        ~ enframe(.x, name = "year",
+                  value = "population") %>% 
+          mutate(
+            year = paste0("x", 1945:2015)
+          )
+      )
+    ),
+    # Make time series data
+    across(
+      c(data:pop_fix_0_25),
+      ~ map(
+        .x,
+        ~ ts(.x$population, 1945, 2015) %>%
+          log()
+      ),
+      .names = "ts_{str_remove(.col, 'pop_')}"
+    ),
+    
+    # Make imputation data
+    across(
+      c(ts_data:ts_fix_0_25),
+      ~ map(
+        .x,
+        na_kalman_safe
+      ),
+      .names = "kalman{str_remove(.col, 'ts')}"
     )
   )
 
+status_population_fixing <- population_imp %>% 
+  select(
+    salid1,
+    kalman_data:kalman_fix_0_25
+  ) %>% 
+  pivot_longer(
+    cols = -salid1,
+    names_to = "kalman",
+    values_to = "list"
+  ) %>% 
+  filter(map_lgl(.$list, ~ is.null(.x$error))) %>% 
+  count(kalman) %>% 
+  mutate(
+    tot = 648
+  )
+
 population_imp_errors <- population_imp %>% 
-  filter(map_lgl(.$kalman_data, ~ !is.null(.x$error)))
+  filter(map_lgl(.$kalman_fix_0_20, ~ !is.null(.x$error)))
 
 population_imp_clean <- population_imp %>% 
-  filter(map_lgl(.$kalman_data, ~ is.null(.x$error))) %>% 
-  mutate(kalman_data = map(kalman_data, 'result'))
+  filter(map_lgl(.$kalman_fix_0_20, ~ is.null(.x$error))) %>% 
+  mutate(kalman_fix_0_20 = map(kalman_fix_0_20, 'result'))
 ```
 
 # Merge data
@@ -153,13 +226,13 @@ population_imp_clean <- population_imp %>%
 ```{r}
 population_imp_merge <- population_imp_clean %>% 
   mutate(
-    kalman_data = map(kalman_data,
+    kalman_fix_0_20 = map(kalman_fix_0_20,
                       ~ as_tibble(.x) %>% 
                         mutate(
                           x = exp(x),
                           year = paste0("x", 1945:2015))
                         ),
-    data_imputation = map2(data, kalman_data,
+    data_imputation = map2(pop_fix_0_20, kalman_fix_0_20,
                            ~ .x %>% 
                              left_join(.y,
                                        by = join_by(year)))
@@ -238,6 +311,6 @@ pop_bectuareal <- population_imp_merge %>%
 # Export data
 
 ```{r}
-saveRDS(pop_bectuareal, 
+saveRDS(pop_bectuareal,  
         file = "01_data/processed/pop_bectuareal1ux.rds")
 ```
