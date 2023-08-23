@@ -46,19 +46,34 @@ library(multidplyr)
 pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal1ux.rds")
 ```
 
+# Formateo de datos
 
-# Format
+Se crearán 3 objetos: 
+
+- `pop_bectu_gbmt_df`: Contiene a las coincidencias completas de datos poblacionales y crecimiento poblacional en las ciudades.
+- `pop_gbmt_df`: Contiene solo a los valores imputados completos de las poblaciones en ciudades.
+- `bectu_gbmt_df`: Contiene solo a los valores imputados completos de los crecimientos poblacionales en ciudades.
 
 ```{r}
-pop_bectuareal <- pop_bectuareal %>% 
-  filter(year >= 1985) %>% 
-  select(-c(population, bectuareal1ux)) %>% 
-  as.data.frame()
+pop_bectu_gbmt_df <- pop_bectuareal %>%
+  select(
+    salid1, year,
+    population_imp, bectuareal1ux_imp
+  ) %>%
+  drop_na()
+
+pop_gbmt_df <- pop_bectuareal %>%
+  select(salid1, year, population_imp) %>%
+  drop_na(population_imp)
+
+bectu_gbmt_df <- pop_bectuareal %>%
+  select(salid1, year, bectuareal1ux_imp) %>%
+  drop_na(bectuareal1ux_imp) 
 ```
 
-# Analysis
+# Estimación
 
-Settings:
+Configuración de uso multinúcleo para el análisis:
 ```{r}
 cluster <- new_cluster(parallel::detectCores())
 cluster_library(cluster, c("dplyr", "purrr", "gbmt"))
@@ -66,39 +81,59 @@ gbmt_safe <- safely(.f = gbmt)
 cluster_copy(cluster, "gbmt_safe")
 ```
 
-```{r}
-gbmt_matrix <- expand_grid(
-  d = 1:2,
-  ng = 1:10,
-  scale = 1:2
-) %>% 
-  mutate(data = list(pop_bectuareal))
-```
+Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conjuntos de datos para analizar en cada fila. 
 
 ```{r}
-gbmt_outputs <- gbmt_matrix %>% 
-  partition(cluster) %>% 
+gbmt_matrix <- expand_grid(
+  d = 2,
+  ng = 1:10,
+  scale = 2,
+  tibble(
+    data_gbmt = list(
+      pop_bectu_gbmt_df,
+      pop_gbmt_df,
+      bectu_gbmt_df
+    ),
+    x_names = list(
+      c("population_imp", "bectuareal1ux_imp"),
+      c("population_imp"),
+      c("bectuareal1ux_imp")
+    )
+  )  
+) 
+```
+
+Este siguiente bloque realiza las estimaciones especificadas arriba usando todos los núcleos del procesador.
+
+```{r}
+gbmt_outputs <- gbmt_matrix %>%
+  partition(cluster) %>%
   mutate(
     gbmt_out = pmap(
-      list(data, d, ng, scale),
+      list(
+        data_gbmt, x_names,
+        d, ng, scale
+      ), 
       ~ gbmt_safe(
-          x.names = c("population_imp", "bectuareal1ux_imp"), 
-          unit = "salid1", 
-          time = "year",
-          data = as.data.frame(..1),
-          d = ..2,
-          ng = ..3,
-          scaling = ..4
+        x.names = ..2,
+        unit = "salid1",
+        time = "year",
+        data = as.data.frame(..1),
+        d = ..3,
+        ng = ..4,
+        scaling = ..5
       )
     )
   )
 
-gbmt_collect <- gbmt_outputs %>% 
+gbmt_collect <- gbmt_outputs %>%
   collect()
 ```
 
-```{r}
+```{r eval=FALSE}
 saveRDS(gbmt_collect,
-        file = "01_data/processed/gbmt_collect_ux2.rds")
+  file = "01_data/processed/gbmt_collect_pop_bectu.rds"
+)
 ```
+
 
