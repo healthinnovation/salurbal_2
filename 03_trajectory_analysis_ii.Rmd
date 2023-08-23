@@ -32,17 +32,24 @@ knitr::opts_chunk$set(
 )
 ```
 
+<!-- Lineas escalas -->
+<!-- transformacion inversa -->
+<!-- Barras porcentuales -->
+<!-- BArras apiladas -->
+<!-- Mapas facet -->
+
 # Load packages
 
 ```{r}
 library(tidyverse)
-library(gbmt)
+# library(gbmt)
 ```
 
 # Import data
 
 ```{r}
-gbmt_collect <- readRDS("01_data/processed/gbmt_collect_ux.rds")
+gbmt_collect <- readRDS("01_data/processed/gbmt_collect_pop_bectu.rds")
+city_info <- readRDS("01_data/processed/city_info.rds")
 ```
 
 ```{r}
@@ -55,113 +62,488 @@ gbmt_collect_clean <- gbmt_collect %>%
 ```
 
 
-# Fit measures
+## Índices de validación
 
 ```{r}
-calculate_OCC <- function(model) {
-  num_groups <- length(model$appa)
-
-  # Si el modelo tiene solo un grupo, devolver 999.0
-  if (num_groups == 1) {
-    return(999.0)
-  }
-
-  # Encontrar el grupo asignado para cada observación según la máxima probabilidad posterior
-  assigned_groups <- apply(model$posterior, 1, which.max)
-
-  # Calcular la proporción de población estimada para cada grupo
-  population_proportion <- table(assigned_groups) / length(assigned_groups)
-
-  # Calcular el OCC para cada grupo
-  OCC <- sapply(1:num_groups, function(j) {
-    # Si APPA es igual a 1, devolver 999.0
-    if (model$appa[j] == 1) {
-      return(999.0)
-    }
-
-    odds_correct <- model$appa[j] / (1 - model$appa[j])
-    odds_random <- population_proportion[j] / (1 - population_proportion[j])
-    return(odds_correct / odds_random)
-  })
-
-  # Devolver el promedio de OCC
-  return(mean(OCC))
-}
-
-calculate_mismatch <- function(model) {
-  # Calcular las proporciones de cada grupo estimadas por el modelo
-  group_proportions <- model$prior
-
-  # Calcular las proporciones reales de cada grupo en la muestra
-  real_proportions <- table(factor(model$assign, levels = 1:length(group_proportions))) / length(model$assign)
-
-  # Calcular el Mismatch para cada grupo
-  mismatch <- group_proportions - real_proportions
-
-  # Devolver el promedio de los valores absolutos de Mismatch de todos los grupos
-  return(mean(abs(mismatch)))
-}
-
-calculate_SD_GMP <- function(model) {
-  # Inicializar un vector para almacenar el SD-GMP para cada grupo
-  sd_gmp <- numeric(length(model$prior))
-
-  # Calcular el SD-GMP para cada grupo
-  for (j in 1:length(model$prior)) {
-    assigned_indices <- which(model$assign == j)
-    group_probs <- model$posterior[assigned_indices, j]
-    sd_gmp[j] <- sd(group_probs)
-  }
-
-  # Devolver la media de los SD-GMP de todos los grupos
-  return(mean(sd_gmp))
-}
+source("fit-index-gbmt.r")
 ```
 
-
 ```{r}
-gbmt_fit_total <- gbmt_collect_clean %>% 
+gbmt_fit_total <- gbmt_collect_clean %>%
   mutate(
     AIC = map_dbl(gbmt_out, AIC),
     BIC = map_dbl(gbmt_out, BIC),
     L = map_dbl(gbmt_out, logLik),
-    APPA = map_dbl(gbmt_out, ~mean(.$appa)),
+    APPA = map_dbl(gbmt_out, ~ mean(.$appa)),
     Mismatch = map_dbl(gbmt_out, calculate_mismatch),
     SD_GMP = map_dbl(gbmt_out, calculate_SD_GMP),
     OCC = map_dbl(gbmt_out, calculate_OCC),
-    smallest_group = map2_dbl(gbmt_out, ng,
-                             ~min(table(factor(.x$assign, levels = 1:.y))) /
-                               sum(table(factor(.x$assign, levels = 1:.y))))
-  ) %>% 
-  arrange(d, ng, scale)
-
-gbmt_fit_total
+    smallest_group = map2_dbl(
+      gbmt_out, ng,
+      ~ min(table(factor(.x$assign, levels = 1:.y))) /
+        sum(table(factor(.x$assign, levels = 1:.y)))
+    ),
+    city_info = list(city_info)
+  ) %>%
+  arrange(ng, d, scale)
 ```
 
+Exportar la información sobre los índices de ajuste: 
 
 ```{r}
-gbmt_fit_d3_scale2 <- gbmt_fit_total %>%
-  filter(d == 3, scale == 2) %>%
-  arrange(ng)
-gbmt_fit_d2_scale2 <- gbmt_fit_total %>%
-  filter(d == 2, scale == 2) %>%
-  arrange(ng)
-
-
-gbmt_fit_d3_scale2 %>%
-  select(-gbmt_out) %>%
-  openxlsx::write.xlsx(file = "02_output/tables/fit_measures_d3_scale2.xlsx")
-
-gbmt_fit_d2_scale2 %>%
-  select(-gbmt_out) %>%
-  openxlsx::write.xlsx(file = "02_output/tables/fit_measures_d2_scale2.xlsx")
-
+gbmt_fit_total %>%
+  select(d:scale, x_names, AIC:smallest_group) %>%
+  openxlsx::write.xlsx(
+    file = "02_output/tables/fit_measures_models_gbmt.xlsx"
+  )
 ```
+
+## Re-ingreso de información
+
+
+<!-- 
+REVISAR PAPER https://journals.openedition.org/cybergeo/26730 para visualizacion (ver el grafico de cluster) -->
 
 ```{r}
-data <- gbmt_fit_total 
+gbmt_fit_total <- gbmt_fit_total %>%
+  mutate(
+    data_gbmt_extract = map(
+      gbmt_out,
+      ~ .x$data.norm %>%
+        rename_with(
+          ~ paste0(., "_norm"),
+          contains("_imp")
+        ) %>%
+        left_join(
+          .x$data.orig,
+          by = join_by(salid1, year)
+        ) %>%
+        as_tibble()
+    ),
+    assign_list = map(
+      gbmt_out,
+      ~ enframe(.x$assign.list) %>%
+      unnest(cols = c(value)) %>%
+      mutate(
+        salid1 = as.factor(value)
+      ) %>%
+      select(salid1, group = name)
+    )
+  )
 ```
 
+> En este punto se unificará la información de los datos poblacionales, crecimiento urbano, grupo al que pertenece debido al análisis gbmt y la infiormación de las ciudades que está almacenada en `city_info`. Si esa información es incompleta vamos a tener problemas de NA's.
+```{r}
+gbmt_fit_final <- gbmt_fit_total %>%
+  mutate(
+    gbmt_fit_total = pmap(
+      list(
+        data_gbmt_extract,
+        assign_list,
+        city_info
+      ),
+      ~ left_join(
+        ..1,
+        ..2,
+        by = join_by(salid1)
+      ) %>%
+        mutate(
+          SALID0 = str_sub(salid1, 1, 3)
+        ) %>%
+        left_join(
+          ..3 %>%
+            rename(salid1 = SALID1) %>%
+            mutate(salid1 = factor(salid1)),
+          by = join_by(salid1, SALID0)
+        )
+    )
+  )
+```
+
+## Generación de Gráficos
+
+### Gráficos de barra y líneas
+
+```{r}
+library(patchwork)
+
+gg_line_plot <- function(datos, y_variable, y_label, type = "standardized") {
+  gg <- ggplot(datos, aes(x = year, y = !!sym(y_variable))) +
+    geom_line(aes(group = salid1), color = "grey80") +
+    geom_smooth(method = "lm", formula = y ~ I(x^1) + I(x^2)) +
+    scale_x_continuous(breaks = c(seq(1945, 2015, 15), 2015)) +
+    labs(x = NULL, y = y_label) +
+    theme_bw()
+
+  if (type == "standardized") {
+    gg +
+      facet_wrap(vars(group))
+  } else if (type == "non-standardized") {
+    gg +
+      scale_y_continuous(
+        labels = scales::label_number()
+      ) +
+      facet_wrap(vars(group), scales = "free")
+  }
+}
+
+gg_stacked_bar <- function(datos) {
+  datos %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = percent)) +
+    geom_col(aes(fill = group)) +
+    innovar::scale_fill_innova("ccvi") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    geom_label(
+      aes(
+        group = group,
+        label = scales::percent(percent, accuracy = 1)
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    theme_minimal()
+}
+
+gg_bar <- function(datos, year_filter = 2015) {
+  datos %>%
+    filter(year == year_filter) %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = n)) +
+    geom_col(aes(fill = group)) +
+    innovar::scale_fill_innova("ccvi") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    ggrepel::geom_label_repel(
+      aes(
+        group = group,
+        label = n
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    theme_minimal()
+}
+```
+
+Generación de los gráficos de línea estandarizados, sin estandarizar, stacked bar y barras (frecuencia).
+
+```{r}
+gbmt_fit_plots <- gbmt_fit_final %>%
+  mutate(
+    line_plot_std = map2(
+      gbmt_fit_total,
+      x_names,
+      ~ {
+        if (all(.y == c("population_imp", "bectuareal1ux_imp"))) {
+          p1 <- gg_line_plot(.x, "population_imp_norm", "Standardized Population")
+          p2 <- gg_line_plot(.x, "bectuareal1ux_imp_norm", "Standardized Bectuareal1ux")
+          p1 / p2
+        } else if (all(.y == c("population_imp"))) {
+          gg_line_plot(.x, "population_imp_norm", "Standardized Population")
+        } else {
+          gg_line_plot(.x, "bectuareal1ux_imp_norm", "Standardized Bectuareal1ux")
+        }
+      }
+    ),
+    line_plot = map2(
+      gbmt_fit_total,
+      x_names,
+      ~ {
+        if (all(.y == c("population_imp", "bectuareal1ux_imp"))) {
+          p1 <- gg_line_plot(.x, "population_imp", "Population", "non-standardized")
+          p2 <- gg_line_plot(.x, "bectuareal1ux_imp", "Bectuareal1ux", "non-standardized")
+          p1 / p2
+        } else if (all(.y == c("population_imp"))) {
+          gg_line_plot(.x, "population_imp", "Population", "non-standardized")
+        } else {
+          gg_line_plot(.x, "bectuareal1ux_imp", "Bectuareal1ux", "non-standardized")
+        }
+      }
+    ),
+    stacked_bar_plot = map(
+      gbmt_fit_total,
+      gg_stacked_bar
+    ),
+    bar_plot = map(
+      gbmt_fit_total,
+      gg_bar
+    )
+  )
+```
+
+Finalmente guardamos los gráficos generados:
+
+```{r}
+# Función para guardar una lista de gráficos
+save_plots <- function(plots, prefix, x_names, cluster) {
+  walk2(plots, seq_along(plots), function(plot, i) {
+    # Crear el nombre base con las variables
+    var_names <- str_replace_all(x_names[[i]], "_imp", "")
+    var_string <- str_c(var_names, collapse = "-")
+
+    # Crear el nombre del archivo usando el número de cluster
+    filename <- paste0(prefix, "-", cluster[[i]], "-", var_string, "_std.png")
+
+    ggsave(
+      filename,
+      plot,
+      dpi = 300,
+      bg = "white"
+    )
+  })
+}
+
+
+# Aplicar la función a cada una de las últimas cuatro columnas
+save_plots(gbmt_fit_plots$line_plot_std, "02_output/plots/paper/line_plots_std/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$line_plot, "02_output/plots/paper/line_plots/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$stacked_bar_plot, "02_output/plots/paper/stacked_bar_plots/stackedbarplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$bar_plot, "02_output/plots/paper/bar_plots/barplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+
+```
+
+### Generación de mapas
+
+Ahora ingresaremos la información de las geometrías de ciudades y países que se encuentren bajo análisis. 
+
+```{r}
+get_shp <- function(ISO2) {
+  # Obtener shp_1
+  shp_1 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 1
+  ) %>%
+    st_as_sf()
+
+  # Obtener shp_2 y aplicar las transformaciones
+  shp_2 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 2
+  ) %>%
+    st_as_sf() %>%
+    mutate(
+      NAME_2 = str_to_lower(NAME_2),
+      NAME_2 = case_when(
+        str_detect(NAME_2, "capital") ~ str_to_lower(NAME_1),
+        TRUE ~ NAME_2
+      )
+    )
+
+  # Devolver la lista con shp_1 y shp_2
+  list(
+    shp_1 = shp_1,
+    shp_2 = shp_2
+  )
+}
+
+
+shp_list <- unique(gbmt_fit_final$gbmt_fit_total[[1]]$ISO2) %>%
+  set_names() %>%
+  map(get_shp)
+```
+
+Creamos una función para unr los datos y los shapefiles
+
+```{r}
+join_data_shp <- function(data, shp_list) {
+  # Proceso de unión con shapefiles
+  data %>%
+    filter(year == 2015) %>%
+    mutate(
+      City = str_to_lower(City),
+      group = factor(group)
+    ) %>%
+    group_nest(ISO2, country) %>%
+    drop_na(ISO2) %>%
+    mutate(
+      country = str_to_title(country),
+      shp_1 = map(ISO2, ~ shp_list[[.x]]$shp_1),
+      shp_2 = map(ISO2, ~ shp_list[[.x]]$shp_2),
+      shp_inner = map2(
+        data,
+        shp_2,
+        ~ inner_join(
+          .x,
+          .y,
+          by = c("City" = "NAME_2")
+        ) %>%
+          st_as_sf()
+      )
+    )
+}
+```
+
+El cual usaremos a continuación:
+
+```{r}
+gbmt_shp <- map(
+  gbmt_fit_final$gbmt_fit_total,
+  ~ join_data_shp(.x, shp_list)
+)
+```
+
+Y ahora procederemos con la función encargada de la generación de los mapas que tienen a su vez correcciones específicas con fines de visualización en algunos países:
+
+```{r}
+plot_country_map <- function(country_data) {
+  p <- ggplot(country_data$shp_inner[[1]]) +
+    geom_sf(
+      data = country_data$shp_1[[1]],
+      lwd = 0.10
+    ) +
+    geom_sf(aes(fill = group)) +
+    scale_fill_discrete(drop = FALSE) +
+    labs(
+      title = country_data$country,
+      fill = "Cluster"
+    ) +
+    theme_minimal()
+
+  # Si el país es Chile, ajustar los límites del gráfico
+  if (country_data$country == "Chile") {
+    xlim <- c(-90, -55) # Longitud
+    ylim <- c(-56, -17) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-90, -50, by = 10))
+  } else if (country_data$country == "Costa Rica") {
+    xlim <- c(-86, -82.5) # Longitud
+    ylim <- c(11.5, 8) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-86, -80, by = 10))
+  } else if (country_data$country == "Colombia") {
+    xlim <- c(-80, -65) # Longitud
+    ylim <- c(15, -5) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-80, -65, by = 5))
+  } else if (country_data$country == "Argentina") {
+    xlim <- c(-82, -45) # Longitud
+    p <- p + coord_sf(xlim = xlim) +
+      scale_x_continuous(breaks = seq(-80, -40, by = 10))
+  } else if (country_data$country == "Peru") {
+    xlim <- c(-82, -68) # Longitud
+    p <- p + coord_sf(xlim = xlim) +
+      scale_x_continuous(breaks = seq(-80, -68, by = 4))
+  }
+
+  return(p)
+}
+
+# Función para mapear sobre los países de un modelo específico
+plot_model_countries <- function(model_data) {
+  map(
+    model_data$ISO2,
+    ~ plot_country_map(
+      subset(model_data, ISO2 == .)
+    )
+  )
+}
+```
+
+Y se aplica las funciones para cada uno de los modelos de `gbmt_shp`:
+
+```{r}
+maps_models_countries <- map(
+  gbmt_shp,
+  plot_model_countries
+)
+```
+
+Finalmente con la ayuda del paquete `patchwork` se unifican los gráficos por modelos:
+
+```{r}
+final_plots <- list()
+
+# Iterar sobre cada modelo en maps_models_countries
+for (j in 1:length(maps_models_countries)) {
+  # Obtener los gráficos del modelo actual
+  current_graphs <- maps_models_countries[[j]]
+
+  # Combinar los gráficos del modelo actual
+  combined_plot <- current_graphs[[1]]
+  for (i in 2:length(current_graphs)) {
+    combined_plot <- combined_plot + current_graphs[[i]]
+  }
+
+  # Especificar el diseño y unificar las leyendas
+  final_plot <- combined_plot +
+    plot_layout(
+      ncol = 4,
+      nrow = 3,
+      guides = "collect",
+      widths = c(1, 1, 1, 1),
+      heights = c(1, 1, 1)
+    )
+
+  # Almacenar el final_plot en la lista final_plots
+  final_plots[[j]] <- final_plot
+}
+```
+
+Se crea una función para guardar los gráficos de los modelos en función del nombre de su análisis:
+
+```{r}
+# Función para guardar cada gráfico
+save_maps <- function(plot, index, cluster, x_names) {
+  # Crear el nombre base con las variables
+  var_names <- str_replace_all(x_names[[index]], "_imp", "")
+  var_string <- str_c(var_names, collapse = "-")
+
+
+  filename <- paste0(
+    "02_output/plots/paper/maps/mapa-cluster-",
+    cluster[[index]],
+    "-",
+    var_string,
+    ".png"
+  )
+  ggsave(
+    filename,
+    plot,
+    dpi = 600,
+    bg = "white",
+    width = 16,
+    height = 8,
+    device = grDevices::png
+  )
+}
+```
+
+Y por último, aplicamos la función a cada uno de los gráficos de `final_plots`:
+
+```{r}
+walk2(
+  final_plots,
+  seq_along(final_plots),
+  save_maps,
+  cluster = gbmt_fit_final$ng,
+  x_names = gbmt_fit_final$x_names
+)
+```
+
+
+
+
+# CÓDIGO ANTIGUO :
 
 ```{r}
 p2 <- ggplot(data, aes(x = ng)) +
@@ -357,6 +739,10 @@ extract <- function(gbmt) {
 extract_imp <- function(gbmt) {
   gbmt$data.imputed
 }
+
+extract_std <- function(gbmt) {
+  gbmt$data.norm
+}
 ```
 
 ```{r}
@@ -415,6 +801,107 @@ gbmt_fit_total_predict2 <- gbmt_fit_total_predict2 %>%
 ```
 
 ## Gráficos
+
+```{r}
+gbmt_fit_total_predict3 <- gbmt_fit_total_predict2 %>%
+  filter(
+    type_scaling == "standardization",
+    type_polynomial == "lineal (d = 1)",
+    ng == 2
+  ) %>%
+  mutate(
+    data3 = map2(
+      gbmt_out, data,
+      ~ .y %>%
+        select(ISO2, SALID1, country, YEAR) %>%
+        mutate(SALID1 = as.factor(SALID1)) %>%
+        left_join(
+          extract_std(.x)
+        ) %>%
+        left_join(
+          extract(.x) %>%
+            enframe(
+              name = "SALID1",
+              value = "Group"
+            ),
+          by = join_by(SALID1)
+        ) %>%
+        mutate(Group = as.factor(Group)) %>%
+        as_tibble()
+    )
+  )
+
+
+cluster_plot1 <- gbmt_fit_total_predict3$data3[[1]] %>%
+  # filter(YEAR == 1990) %>%
+  ggplot(
+    aes(
+      x = BECTUAREAL1UX,
+      y = YEAR,
+      color = Group
+    )
+  ) +
+  geom_point() +
+  facet_wrap(vars(str_to_title(country))) +
+  theme_minimal()
+
+cluster_plot2 <- gbmt_fit_total_predict3$data3[[1]] %>%
+  filter(YEAR == 1990) %>%
+  ggplot(
+    aes(
+      x = BECTUAREAL1UX,
+      y = Population,
+      color = Group
+    )
+  ) +
+  geom_point() +
+  facet_wrap(vars(str_to_title(country))) +
+  theme_minimal()
+```
+
+```{r}
+library(rgl)
+df <- gbmt_fit_total_predict3$data3[[1]]
+
+# Crear un gráfico 3D
+with(df, {
+    plot3d(YEAR, Population, BECTUAREAL1UX, col=Group, size=1, type="s")
+    # Agregar líneas para unir los puntos del mismo grupo
+    for (g in unique(Group)) {
+        lines3d(subset(df, Group == g)[c("YEAR", "Population", "BECTUAREAL1UX")], col=g)
+    }
+})
+
+```
+
+```{r}
+library(plotly)
+
+df %>%
+  filter(country == "chile") %>%
+  plot_ly(x = ~YEAR, y = ~Population, z = ~BECTUAREAL1UX, color = ~Group, type = "scatter3d", mode = "markers")
+
+```
+
+```{r}
+ggsave(
+  filename = "02_output/plots/Clusteplot1.png",
+  plot = cluster_plot1,
+  bg = "white",
+  dpi = 300,
+  width = 7,
+  height = 5
+)
+
+ggsave(
+  filename = "02_output/plots/Clusteplot2.png",
+  plot = cluster_plot2,
+  bg = "white",
+  dpi = 300,
+  width = 7,
+  height = 5
+)
+```
 
 ```{r}
 gbmt_fit_total_plot3 <- gbmt_fit_total_predict2 %>%
@@ -503,4 +990,64 @@ for (i in seq_len(nrow(gbmt_fit_total_plot3))) {
       height = 5
     )
 }
+```
+
+
+```{r}
+gbmt_fit_total_plot4 <- gbmt_fit_total_predict2 %>%
+  mutate(
+    pob_total_plot = pmap(
+      list(
+        pop_totals, type_polynomial,
+        ng, type_scaling
+      ),
+      ~ ggplot(
+        ..1, aes(x = YEAR, y = total_pop, color = Group)
+      ) +
+        geom_line() +
+        scale_y_continuous(labels = scales::comma) +
+        innovar::scale_color_innova("npr") +
+        facet_wrap(vars(country),
+          scales = "free_y"
+        ) +
+        scale_x_continuous(
+          breaks = seq(1985, 2015, 5)
+        ) +
+        labs(
+          title = str_wrap(paste0(
+            "Absolute Population ",
+            ..2, ", cluster number = ", ..3,
+            ", normalisation method: ", ..4
+          ), 120),
+          x = NULL,
+          y = "Total Population"
+        ) +
+        theme_minimal()
+    ),
+    pob_mean_plot = pmap(
+      list(
+        pop_mean_total, type_polynomial,
+        ng, type_scaling
+      ),
+      ~ ggplot(
+        ..1, aes(x = YEAR, y = mean_pop, color = Group)
+      ) +
+        geom_line() +
+        scale_y_continuous(labels = scales::comma) +
+        innovar::scale_color_innova("npr") +
+        scale_x_continuous(
+          breaks = seq(1985, 2015, 5)
+        ) +
+        labs(
+          title = str_wrap(paste0(
+            "Mean Population ",
+            ..2, ", cluster number = ", ..3,
+            ", normalisation method: ", ..4
+          ), 120),
+          x = NULL,
+          y = "Mean Population"
+        ) +
+        theme_minimal()
+    ),
+  )
 ```
