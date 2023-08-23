@@ -1,0 +1,933 @@
+---
+title: "Trajectory Analysis"
+author:
+  - name: Brian Peña-Calero
+    email: brian.pena@upch.pe
+    affiliation: Innovar, UPCH
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: yes
+    code_folding:showgbmt_fit_total
+      bootswatch: flatly
+    highlight: kate
+    highlight_downlit: true
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Carga de paquetes
+
+```{r}
+library(tidyverse)
+library(gbmt)
+library(multidplyr)
+```
+
+# Importar datos
+
+## Datos Crecimiento Urbano
+
+Los datos de crecimiento urbano actuales solo tienen la columna `ISO2` que identifica al país, y una codificación propia `SALID1` para las ciudades, que es con lo que necesitamos realizar el match, para tener los datos de ciudad en cuanto a su crecimiento poblacional y a la vez en cuánto a su crecimiento urbano.
+
+```{r}
+bec_backcast_l1ux <- read_csv("01_data/raw/Data Request MS242_03082023/BEC_BACKCAST_L1UX_20230302.csv")
+```
+
+Se adiciona la columna `SALID0` calculado como los 3 primeros dígitos de `SALID1`.
+
+```{r}
+bec_backcast_l1ux <- bec_backcast_l1ux %>%
+  mutate(
+    SALID0 = str_sub(SALID1, 1, 3),
+    .before = SALID1
+  )
+bec_backcast_l1ux
+```
+
+## Datos Poblacionales
+
+Para el caso de los datos poblacionales, se tiene la identificación en nombre del país y la ciudad. Se agrega el identificador `ISO2`, para fines de matching.
+
+```{r}
+population <- readxl::read_excel("01_data/raw/df.xlsx")
+```
+
+```{r}
+population <- population %>%
+  mutate(
+    ISO2 = case_match(
+      country,
+      "argentina" ~ "AR",
+      "brazil" ~ "BR",
+      "chile" ~ "CL",
+      "colombia" ~ "CO",
+      "costa rica" ~ "CR",
+      "el salvador" ~ "SV",
+      "guatemala" ~ "GT",
+      "mexico" ~ "MX",
+      "nicaragua" ~ "NI",
+      "panama" ~ "PA",
+      "peru" ~ "PE"
+    ),
+    .before = country
+  ) %>%
+  left_join(
+    bec_backcast_l1ux %>%
+      select(ISO2, SALID0) %>%
+      distinct()
+  ) %>%
+  relocate(ISO2, SALID0) %>%
+  arrange(SALID0)
+population
+```
+
+Se aplica una pequeña corrección a los datos numéricos poblacionales que contienen caracteres como `-` y `" "` (espacios) para representar valores perdidos.
+
+```{r}
+population <- population %>% 
+  mutate(
+    across(everything(),
+           ~ na_if(., "-")),
+    across(c(`1945`:`2022`),
+           ~ str_remove_all(., " ")),
+    across(c(`1945`:`2022`),
+           as.numeric),
+  )
+```
+
+Para operaciones futuras, se crea temporalmente un falso `SALID1` que permitirá tener una identificación única por ciudad y posteriormente unificar los datos.
+
+> **Es aquí donde preferentemente se debería adicionar y/o corregir con la información correcta.**
+
+```{r}
+population <- population %>% 
+  group_by(ISO2) %>% 
+  mutate(
+    SALID1 = paste0(SALID0, 100 + 1:n()),
+    SALID1 = as.numeric(SALID1),
+    .after = SALID0
+  ) %>% 
+  ungroup()
+```
+
+> Se crea este objeto temporal a partir del formato en el objeto `population` que contiene la información de ISO2, SALID0, SALID1, country, City. Aquí debería reemplazarse con el una data que brinde una información equivalente.
+
+```{r eval=FALSE}
+city_info <- population %>%
+  select(
+    ISO2:City
+  )
+
+saveRDS(
+  city_info,
+  file = "01_data/processed/city_info.rds"
+)
+```
+
+# Imputación de datos
+
+Debido a que hay una gran cantidad de valores perdidos a través de los años en distintas ciudades, se realiza un proceso de imputación de datos tanto para los de crecimiento urbano como datos poblacionales.
+
+El análisis de imputación se realiza para cada ciudad, por lo que se usará el enfoque de ***tidy nested*** para organizar los datos de tal manera que cada fila sea una ciudad; y su columna, sea un conjunto de datos que contenga la información de interés a través de los años. Para el proceso de imputación se usará el paquete `imputeTS` wrappeado en la función `safely` (paquete `purrr`) para evitar la detención de errores debido a problemas de convergencia o insuficiencia de datos en algunas ciudades.
+
+```{r}
+library(imputeTS)
+na_kalman_safe <- safely(.f = na_kalman)
+```
+
+## Crecimiento Urbano
+
+Los datos de crecimiento urbano proporcionado tienen información cada 5 años, por lo que se usará la misma técnica de imputación para tener información anual. Para ello primero se completará los años faltantes en el data.frame:
+
+```{r}
+bectuareal_tidy <- bec_backcast_l1ux %>%
+  distinct(SALID1) %>%
+  crossing(YEAR = 1985:2015) %>%
+  left_join(
+    bec_backcast_l1ux %>%
+      select(SALID1, YEAR, BECTUAREAL1UX)
+  ) %>%
+  janitor::clean_names()
+```
+
+Ahora se procede a crear el formato nest:
+
+```{r}
+bectuareal_imp <- bectuareal_tidy %>%
+  group_nest(salid1) %>%
+  mutate(
+    ts_data = map(
+      data,
+      ~ ts(.x$bectuareal1ux, 1985, 2015)
+    ),
+    kalman_data = map(
+      ts_data,
+      na_kalman_safe
+    )
+  )
+```
+
+En este caso también se tiene algunos errores (1)
+
+```{r}
+bectuareal_imp_errors <- bectuareal_imp %>%
+  filter(map_lgl(.$kalman_data, ~ !is.null(.x$error)))
+```
+
+Aunque en la mayoría de ciudades se logra imputar (370 ciudades).
+
+```{r}
+bectuareal_imp_clean <- bectuareal_imp %>% 
+  filter(map_lgl(.$kalman_data, ~ is.null(.x$error))) %>% 
+  mutate(kalman_data = map(kalman_data, 'result'))
+```
+
+Finalmente, se añadirá la información sobre la cantidad original de crecimiento urbano existente para fines de futuras validaciones:
+
+```{r}
+bectuareal_imp_merge <- bectuareal_imp_clean %>%
+  mutate(
+    kalman_data = map(
+      kalman_data,
+      ~ as_tibble(.x) %>%
+        mutate(
+          year = 1985:2015
+        )
+    ),
+    data_imputation = map2(
+      data, kalman_data,
+      ~ .x %>%
+        left_join(.y,
+          by = join_by(year)
+        )
+    )
+  )
+
+bectuareal_imp_merge <- bectuareal_imp_merge %>% 
+  select(salid1, data_imputation) %>% 
+  unnest(cols = c(data_imputation)) %>% 
+  rename(bectuareal1ux_imp = x)
+```
+
+## Datos poblacionales
+
+Necesitamos ordenar los datos y darle un formato **nested**. Observamos que los datos poblacionales con los que se trabaja tiene 648 ciudades.
+
+```{r}
+population_nested <- population %>%
+  janitor::clean_names() %>%
+  select(salid1, x1945:x2015) %>%
+  pivot_longer(
+    cols = x1945:x2015,
+    names_to = "year",
+    values_to = "population"
+  ) %>%
+  group_nest(salid1)
+population_nested
+```
+
+Se tiene una función que verifica una desviación máxima de valores poblacionales en una ciudad en particular a partir de su mediana a lo largo de los años. Por defecto, se usa el criterio de 20% máximo de variación. En caso algún valor poblacional supere este valor, se ingresará un `NA` en lugar del valor reportado. Así, la imputación podrá también estimar estos valores *anómalos*.
+
+```{r}
+fix_population <- function(data, desviacion_max = 0.2) {
+  data_wo_na <- na.omit(data)
+  
+  if (length(data_wo_na) < 2) {
+    return(data)
+  }
+  
+  median_population <- median(data_wo_na)
+  
+  upper_limit <- median_population * (1 + desviacion_max)
+  lower_limit <- median_population * (1 - desviacion_max)
+  
+  data_fix <- ifelse(
+    !is.na(data) & (data > upper_limit | data < lower_limit), 
+    NA, 
+    data
+  )
+  return(data_fix)
+}
+```
+
+```{r}
+population_imp <- population_nested %>%
+  mutate(
+    # Aplicación de la corrección
+    pop_fix = map(
+      data, 
+      ~ fix_population(.x$population) %>%
+        enframe(
+          name = "year",
+          value = "population"
+        ) %>%
+        mutate(
+          year = paste0("x", 1945:2015)
+        )
+    ),
+    # Transformar a objeto `time series`
+    ts_pop_fix = map(
+      pop_fix,
+      ~ ts(.x$population, 1945, 2015) %>%
+        log()
+    ),
+    # Aplicación de la imputación
+    kalman_pop_fix = map(
+      ts_pop_fix, 
+      na_kalman_safe
+    )
+  )
+```
+
+Debido a que algunas ciudades tienen valores perdidos en todos los años de análisis, no en todos los casos la imputación es factible. En este caso hubo un total de *208* ciudades con problemas de imputación.
+
+```{r}
+population_imp_errors <- population_imp %>%
+  filter(map_lgl(.$kalman_pop_fix, ~ !is.null(.x$error)))
+```
+
+En tanto, la cantidad de ciudades con las que se podrá trabajar con información poblacional será de *440*.
+
+```{r}
+population_imp_clean <- population_imp %>%
+  filter(map_lgl(.$kalman_pop_fix, ~ is.null(.x$error))) %>%
+  mutate(kalman_pop_fix = map(kalman_pop_fix, "result"))
+```
+
+Finalmente, se añadirá la información sobre la cantidad original de dato poblacional existente para fines de futuras validaciones:
+
+```{r}
+population_imp_merge <- population_imp_clean %>%
+  mutate(
+    kalman_pop_fix = map(
+      kalman_pop_fix,
+      ~ as_tibble(.x) %>%
+        mutate(
+          x = exp(x), 
+          year = paste0("x", 1945:2015)
+        )
+    ),
+    data_imputation = map2(
+      pop_fix, kalman_pop_fix,
+      ~ .x %>%
+        left_join(.y,
+          by = join_by(year)
+        )
+    )
+  )
+
+population_imp_merge <- population_imp_merge %>%
+  select(salid1, data_imputation) %>%
+  unnest(cols = c(data_imputation)) %>%
+  rename(population_imp = x) %>%
+  mutate(
+    year = str_remove(year, "x"),
+    year = as.numeric(year)
+  )
+
+population_imp_merge
+```
+
+# Unificación de datos
+
+En este punto, ya se tiene los datos poblacionales y de crecimiento urbano limpios y ordenados. Se realiza la unificación en base al código `salid1` que deberían tener ambos objetos. 
+
+Se usa la función `full_join` para tener la posibilidad de analizar los datos poblacionales y de crecimiento juntos y separados.
+
+```{r}
+pop_bectuareal <- full_join(
+  population_imp_merge,
+  bectuareal_imp_merge,
+  by = join_by(salid1, year) 
+)
+```
+
+# Grouped-based Model Trajectory (GBMT)
+
+## Formateo de datos
+
+Se crearán 3 objetos: 
+
+- `pop_bectu_gbmt_df`: Contiene a las coincidencias completas de datos poblacionales y crecimiento poblacional en las ciudades.
+- `pop_gbmt_df`: Contiene solo a los valores imputados completos de las poblaciones en ciudades.
+- `bectu_gbmt_df`: Contiene solo a los valores imputados completos de los crecimientos poblacionales en ciudades.
+
+```{r}
+pop_bectu_gbmt_df <- pop_bectuareal %>%
+  select(
+    salid1, year,
+    population_imp, bectuareal1ux_imp
+  ) %>%
+  drop_na()
+
+pop_gbmt_df <- pop_bectuareal %>%
+  select(salid1, year, population_imp) %>%
+  drop_na(population_imp)
+
+bectu_gbmt_df <- pop_bectuareal %>%
+  select(salid1, year, bectuareal1ux_imp) %>%
+  drop_na(bectuareal1ux_imp) 
+```
+
+## Estimación
+
+Configuración de uso multinúcleo para el análisis:
+```{r}
+cluster <- new_cluster(parallel::detectCores())
+cluster_library(cluster, c("dplyr", "purrr", "gbmt"))
+gbmt_safe <- safely(.f = gbmt)
+cluster_copy(cluster, "gbmt_safe")
+```
+
+Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conjuntos de datos para analizar en cada fila. 
+
+```{r}
+gbmt_matrix <- expand_grid(
+  d = 2,
+  ng = 1:10,
+  scale = 2,
+  tibble(
+    data_gbmt = list(
+      pop_bectu_gbmt_df,
+      pop_gbmt_df,
+      bectu_gbmt_df
+    ),
+    x_names = list(
+      c("population_imp", "bectuareal1ux_imp"),
+      c("population_imp"), # Quitarlo porque esto ya tenemos como hacerlo
+      c("bectuareal1ux_imp")
+    )
+  )  
+) 
+```
+
+Este siguiente bloque realiza las estimaciones especificadas arriba usando todos los núcleos del procesador.
+
+```{r}
+gbmt_outputs <- gbmt_matrix %>%
+  partition(cluster) %>%
+  mutate(
+    gbmt_out = pmap(
+      list(
+        data_gbmt, x_names,
+        d, ng, scale
+      ), 
+      ~ gbmt_safe(
+        x.names = ..2,
+        unit = "salid1",
+        time = "year",
+        data = as.data.frame(..1),
+        d = ..3,
+        ng = ..4,
+        scaling = ..5
+      )
+    )
+  )
+
+gbmt_collect <- gbmt_outputs %>%
+  collect()
+```
+
+```{r eval=FALSE}
+saveRDS(gbmt_collect,
+  file = "01_data/processed/gbmt_collect_pop_bectu.rds"
+)
+```
+
+
+```{r}
+gbmt_collect_errors <- gbmt_collect %>% 
+  filter(map_lgl(.$gbmt_out, ~ !is.null(.x$error)))
+
+gbmt_collect_clean <- gbmt_collect %>% 
+  filter(map_lgl(.$gbmt_out, ~ is.null(.x$error))) %>% 
+  mutate(gbmt_out = map(gbmt_out, 'result'))
+```
+
+
+## Índices de validación
+
+```{r}
+source("fit-index-gbmt.r")
+```
+
+```{r}
+gbmt_fit_total <- gbmt_collect_clean %>%
+  mutate(
+    AIC = map_dbl(gbmt_out, AIC),
+    BIC = map_dbl(gbmt_out, BIC),
+    L = map_dbl(gbmt_out, logLik),
+    APPA = map_dbl(gbmt_out, ~ mean(.$appa)),
+    Mismatch = map_dbl(gbmt_out, calculate_mismatch),
+    SD_GMP = map_dbl(gbmt_out, calculate_SD_GMP),
+    OCC = map_dbl(gbmt_out, calculate_OCC),
+    smallest_group = map2_dbl(
+      gbmt_out, ng,
+      ~ min(table(factor(.x$assign, levels = 1:.y))) /
+        sum(table(factor(.x$assign, levels = 1:.y)))
+    ),
+    city_info = list(city_info)
+  ) %>%
+  arrange(ng, d, scale)
+```
+
+Exportar la información sobre los índices de ajuste: 
+
+```{r}
+gbmt_fit_total %>%
+  select(d:scale, x_names, AIC:smallest_group) %>%
+  openxlsx::write.xlsx(
+    file = "02_output/tables/fit_measures_models_gbmt.xlsx"
+  )
+```
+
+## Re-ingreso de información
+
+
+<!-- 
+REVISAR PAPER https://journals.openedition.org/cybergeo/26730 para visualizacion (ver el grafico de cluster) -->
+
+```{r}
+gbmt_fit_total <- gbmt_fit_total %>%
+  mutate(
+    data_gbmt_extract = map(
+      gbmt_out,
+      ~ .x$data.norm %>%
+        rename_with(
+          ~ paste0(., "_norm"),
+          contains("_imp")
+        ) %>%
+        left_join(
+          .x$data.orig,
+          by = join_by(salid1, year)
+        ) %>%
+        as_tibble()
+    ),
+    assign_list = map(
+      gbmt_out,
+      ~ enframe(.x$assign.list) %>%
+      unnest(cols = c(value)) %>%
+      mutate(
+        salid1 = as.factor(value)
+      ) %>%
+      select(salid1, group = name)
+    )
+  )
+```
+
+> En este punto se unificará la información de los datos poblacionales, crecimiento urbano, grupo al que pertenece debido al análisis gbmt y la infiormación de las ciudades que está almacenada en `city_info`. Si esa información es incompleta vamos a tener problemas de NA's.
+```{r}
+gbmt_fit_final <- gbmt_fit_total %>%
+  mutate(
+    gbmt_fit_total = pmap(
+      list(
+        data_gbmt_extract,
+        assign_list,
+        city_info
+      ),
+      ~ left_join(
+        ..1,
+        ..2,
+        by = join_by(salid1)
+      ) %>%
+        mutate(
+          SALID0 = str_sub(salid1, 1, 3)
+        ) %>%
+        left_join(
+          ..3 %>%
+            rename(salid1 = SALID1) %>%
+            mutate(salid1 = factor(salid1)),
+          by = join_by(salid1, SALID0)
+        )
+    )
+  )
+```
+
+## Generación de Gráficos
+
+### Gráficos de barra y líneas
+
+```{r}
+library(patchwork)
+
+gg_line_plot <- function(datos, y_variable, y_label, type = "standardized") {
+  gg <- ggplot(datos, aes(x = year, y = !!sym(y_variable))) +
+    geom_line(aes(group = salid1), color = "grey80") +
+    geom_smooth(method = "lm", formula = y ~ I(x^1) + I(x^2)) +
+    scale_x_continuous(breaks = c(seq(1945, 2015, 15), 2015)) +
+    labs(x = NULL, y = y_label) +
+    theme_bw()
+
+  if (type == "standardized") {
+    gg +
+      facet_wrap(vars(group))
+  } else if (type == "non-standardized") {
+    gg +
+      scale_y_continuous(
+        labels = scales::label_number()
+      ) +
+      facet_wrap(vars(group), scales = "free")
+  }
+}
+
+gg_stacked_bar <- function(datos) {
+  datos %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = percent)) +
+    geom_col(aes(fill = group)) +
+    innovar::scale_fill_innova("ccvi") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    geom_label(
+      aes(
+        group = group,
+        label = scales::percent(percent, accuracy = 1)
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    theme_minimal()
+}
+
+gg_bar <- function(datos, year_filter = 2015) {
+  datos %>%
+    filter(year == year_filter) %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = n)) +
+    geom_col(aes(fill = group)) +
+    innovar::scale_fill_innova("ccvi") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    ggrepel::geom_label_repel(
+      aes(
+        group = group,
+        label = n
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    theme_minimal()
+}
+```
+
+Generación de los gráficos de línea estandarizados, sin estandarizar, stacked bar y barras (frecuencia).
+
+```{r}
+gbmt_fit_plots <- gbmt_fit_final %>%
+  mutate(
+    line_plot_std = map2(
+      gbmt_fit_total,
+      x_names,
+      ~ {
+        if (all(.y == c("population_imp", "bectuareal1ux_imp"))) {
+          p1 <- gg_line_plot(.x, "population_imp_norm", "Standardized Population")
+          p2 <- gg_line_plot(.x, "bectuareal1ux_imp_norm", "Standardized Bectuareal1ux")
+          p1 / p2
+        } else if (all(.y == c("population_imp"))) {
+          gg_line_plot(.x, "population_imp_norm", "Standardized Population")
+        } else {
+          gg_line_plot(.x, "bectuareal1ux_imp_norm", "Standardized Bectuareal1ux")
+        }
+      }
+    ),
+    line_plot = map2(
+      gbmt_fit_total,
+      x_names,
+      ~ {
+        if (all(.y == c("population_imp", "bectuareal1ux_imp"))) {
+          p1 <- gg_line_plot(.x, "population_imp", "Population", "non-standardized")
+          p2 <- gg_line_plot(.x, "bectuareal1ux_imp", "Bectuareal1ux", "non-standardized")
+          p1 / p2
+        } else if (all(.y == c("population_imp"))) {
+          gg_line_plot(.x, "population_imp", "Population", "non-standardized")
+        } else {
+          gg_line_plot(.x, "bectuareal1ux_imp", "Bectuareal1ux", "non-standardized")
+        }
+      }
+    ),
+    stacked_bar_plot = map(
+      gbmt_fit_total,
+      gg_stacked_bar
+    ),
+    bar_plot = map(
+      gbmt_fit_total,
+      gg_bar
+    )
+  )
+```
+
+Finalmente guardamos los gráficos generados:
+
+```{r}
+# Función para guardar una lista de gráficos
+save_plots <- function(plots, prefix, x_names, cluster) {
+  walk2(plots, seq_along(plots), function(plot, i) {
+    # Crear el nombre base con las variables
+    var_names <- str_replace_all(x_names[[i]], "_imp", "")
+    var_string <- str_c(var_names, collapse = "-")
+
+    # Crear el nombre del archivo usando el número de cluster
+    filename <- paste0(prefix, "-", cluster[[i]], "-", var_string, "_std.png")
+
+    ggsave(
+      filename,
+      plot,
+      dpi = 300,
+      bg = "white"
+    )
+  })
+}
+
+
+# Aplicar la función a cada una de las últimas cuatro columnas
+save_plots(gbmt_fit_plots$line_plot_std, "02_output/plots/paper/line_plots_std/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$line_plot, "02_output/plots/paper/line_plots/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$stacked_bar_plot, "02_output/plots/paper/stacked_bar_plots/stackedbarplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$bar_plot, "02_output/plots/paper/bar_plots/barplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+
+```
+
+### Generación de mapas
+
+Ahora ingresaremos la información de las geometrías de ciudades y países que se encuentren bajo análisis. 
+
+```{r}
+get_shp <- function(ISO2) {
+  # Obtener shp_1
+  shp_1 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 1
+  ) %>%
+    st_as_sf()
+
+  # Obtener shp_2 y aplicar las transformaciones
+  shp_2 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 2
+  ) %>%
+    st_as_sf() %>%
+    mutate(
+      NAME_2 = str_to_lower(NAME_2),
+      NAME_2 = case_when(
+        str_detect(NAME_2, "capital") ~ str_to_lower(NAME_1),
+        TRUE ~ NAME_2
+      )
+    )
+
+  # Devolver la lista con shp_1 y shp_2
+  list(
+    shp_1 = shp_1,
+    shp_2 = shp_2
+  )
+}
+
+
+shp_list <- unique(gbmt_fit_final$gbmt_fit_total[[1]]$ISO2) %>%
+  set_names() %>%
+  map(get_shp)
+```
+
+Creamos una función para unr los datos y los shapefiles
+
+```{r}
+join_data_shp <- function(data, shp_list) {
+  # Proceso de unión con shapefiles
+  data %>%
+    filter(year == 2015) %>%
+    mutate(
+      City = str_to_lower(City),
+      group = factor(group)
+    ) %>%
+    group_nest(ISO2, country) %>%
+    drop_na(ISO2) %>%
+    mutate(
+      country = str_to_title(country),
+      shp_1 = map(ISO2, ~ shp_list[[.x]]$shp_1),
+      shp_2 = map(ISO2, ~ shp_list[[.x]]$shp_2),
+      shp_inner = map2(
+        data,
+        shp_2,
+        ~ inner_join(
+          .x,
+          .y,
+          by = c("City" = "NAME_2")
+        ) %>%
+          st_as_sf()
+      )
+    )
+}
+```
+
+El cual usaremos a continuación:
+
+```{r}
+gbmt_shp <- map(
+  gbmt_fit_final$gbmt_fit_total,
+  ~ join_data_shp(.x, shp_list)
+)
+```
+
+Y ahora procederemos con la función encargada de la generación de los mapas que tienen a su vez correcciones específicas con fines de visualización en algunos países:
+
+```{r}
+plot_country_map <- function(country_data) {
+  p <- ggplot(country_data$shp_inner[[1]]) +
+    geom_sf(
+      data = country_data$shp_1[[1]],
+      lwd = 0.10
+    ) +
+    geom_sf(aes(fill = group)) +
+    scale_fill_discrete(drop = FALSE) +
+    labs(
+      title = country_data$country,
+      fill = "Cluster"
+    ) +
+    theme_minimal()
+
+  # Si el país es Chile, ajustar los límites del gráfico
+  if (country_data$country == "Chile") {
+    xlim <- c(-90, -55) # Longitud
+    ylim <- c(-56, -17) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-90, -50, by = 10))
+  } else if (country_data$country == "Costa Rica") {
+    xlim <- c(-86, -82.5) # Longitud
+    ylim <- c(11.5, 8) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-86, -80, by = 10))
+  } else if (country_data$country == "Colombia") {
+    xlim <- c(-80, -65) # Longitud
+    ylim <- c(15, -5) # Latitud
+    p <- p + coord_sf(xlim = xlim, ylim = ylim) +
+      scale_x_continuous(breaks = seq(-80, -65, by = 5))
+  } else if (country_data$country == "Argentina") {
+    xlim <- c(-82, -45) # Longitud
+    p <- p + coord_sf(xlim = xlim) +
+      scale_x_continuous(breaks = seq(-80, -40, by = 10))
+  } else if (country_data$country == "Peru") {
+    xlim <- c(-82, -68) # Longitud
+    p <- p + coord_sf(xlim = xlim) +
+      scale_x_continuous(breaks = seq(-80, -68, by = 4))
+  }
+
+  return(p)
+}
+
+# Función para mapear sobre los países de un modelo específico
+plot_model_countries <- function(model_data) {
+  map(
+    model_data$ISO2,
+    ~ plot_country_map(
+      subset(model_data, ISO2 == .)
+    )
+  )
+}
+```
+
+Y se aplica las funciones para cada uno de los modelos de `gbmt_shp`:
+
+```{r}
+maps_models_countries <- map(
+  gbmt_shp,
+  plot_model_countries
+)
+```
+
+Finalmente con la ayuda del paquete `patchwork` se unifican los gráficos por modelos:
+
+```{r}
+final_plots <- list()
+
+# Iterar sobre cada modelo en maps_models_countries
+for (j in 1:length(maps_models_countries)) {
+  # Obtener los gráficos del modelo actual
+  current_graphs <- maps_models_countries[[j]]
+
+  # Combinar los gráficos del modelo actual
+  combined_plot <- current_graphs[[1]]
+  for (i in 2:length(current_graphs)) {
+    combined_plot <- combined_plot + current_graphs[[i]]
+  }
+
+  # Especificar el diseño y unificar las leyendas
+  final_plot <- combined_plot +
+    plot_layout(
+      ncol = 4,
+      nrow = 3,
+      guides = "collect",
+      widths = c(1, 1, 1, 1),
+      heights = c(1, 1, 1)
+    )
+
+  # Almacenar el final_plot en la lista final_plots
+  final_plots[[j]] <- final_plot
+}
+```
+
+Se crea una función para guardar los gráficos de los modelos en función del nombre de su análisis:
+
+```{r}
+# Función para guardar cada gráfico
+save_maps <- function(plot, index, cluster, x_names) {
+  # Crear el nombre base con las variables
+  var_names <- str_replace_all(x_names[[index]], "_imp", "")
+  var_string <- str_c(var_names, collapse = "-")
+
+
+  filename <- paste0(
+    "02_output/plots/paper/maps/mapa-cluster-",
+    cluster[[index]],
+    "-",
+    var_string,
+    ".png"
+  )
+  ggsave(
+    filename,
+    plot,
+    dpi = 600,
+    bg = "white",
+    width = 16,
+    height = 8,
+    device = grDevices::png
+  )
+}
+```
+
+Y por último, aplicamos la función a cada uno de los gráficos de `final_plots`:
+
+```{r}
+walk2(
+  final_plots,
+  seq_along(final_plots),
+  save_maps,
+  cluster = gbmt_fit_final$ng,
+  x_names = gbmt_fit_final$x_names
+)
+```
