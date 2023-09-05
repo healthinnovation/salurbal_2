@@ -126,11 +126,15 @@ city_info <- population %>%
   select(
     ISO2:City
   )
+```
 
+```{r eval=FALSE}
 saveRDS(
   city_info,
   file = "01_data/processed/city_info.rds"
 )
+
+#city_info <- readRDS("01_data/processed/city_info.rds")
 ```
 
 # Imputación de datos
@@ -394,7 +398,7 @@ Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conj
 gbmt_matrix <- expand_grid(
   d = 2,
   ng = 1:10,
-  scale = 2,
+  scale = c(2, 4),
   tibble(
     data_gbmt = list(
       pop_bectu_gbmt_df,
@@ -403,7 +407,7 @@ gbmt_matrix <- expand_grid(
     ),
     x_names = list(
       c("population_imp", "bectuareal1ux_imp"),
-      c("population_imp"), # Quitarlo porque esto ya tenemos como hacerlo
+      c("population_imp"),
       c("bectuareal1ux_imp")
     )
   )  
@@ -438,9 +442,13 @@ gbmt_collect <- gbmt_outputs %>%
 ```
 
 ```{r eval=FALSE}
+fs::dir_create("01_data/processed/")
+
 saveRDS(gbmt_collect,
   file = "01_data/processed/gbmt_collect_pop_bectu.rds"
 )
+
+#gbmt_collect <- readRDS("01_data/processed/gbmt_collect_pop_bectu.rds")
 ```
 
 
@@ -483,6 +491,8 @@ gbmt_fit_total <- gbmt_collect_clean %>%
 Exportar la información sobre los índices de ajuste: 
 
 ```{r}
+fs::dir_create("02_output/tables/")
+
 gbmt_fit_total %>%
   select(d:scale, x_names, AIC:smallest_group) %>%
   openxlsx::write.xlsx(
@@ -490,11 +500,49 @@ gbmt_fit_total %>%
   )
 ```
 
+Exportar el output de las regresiones:
+
+```{r}
+# Esta función procesa un único conjunto de regresiones
+process_regressions <- function(regressions, ng, scale) {
+  result_list <- list()
+
+  for (group in names(regressions)) {
+    for (var_name in names(regressions[[group]])) {
+      tmp <- broom::tidy(regressions[[group]][[var_name]])
+      tmp$variable <- var_name
+      tmp$ng <- ng
+      tmp$scale <- scale
+      tmp$group <- as.integer(group)
+
+      result_list[[length(result_list) + 1]] <- tmp
+    }
+  }
+
+  bind_rows(result_list)
+}
+
+# Procesa todas las regresiones en gbmt_fit_total$gbmt_out
+results_all <- lapply(1:length(gbmt_fit_total$gbmt_out), function(i) {
+  process_regressions(
+    regressions = gbmt_fit_total$gbmt_out[[i]]$reg,
+    ng = gbmt_fit_total$ng[i],
+    scale = gbmt_fit_total$scale[i]
+  )
+})
+
+# Convierte los resultados en un formato más manejable
+resultados_tidy <- bind_rows(results_all)
+```
+
+```{r eval=FALSE}
+saveRDS(
+  resultados_tidy, 
+  file = "02_output/tables/resultados_tidy_reg.rds"
+)
+```
+
 ## Re-ingreso de información
-
-
-<!-- 
-REVISAR PAPER https://journals.openedition.org/cybergeo/26730 para visualizacion (ver el grafico de cluster) -->
 
 ```{r}
 gbmt_fit_total <- gbmt_fit_total %>%
@@ -525,6 +573,7 @@ gbmt_fit_total <- gbmt_fit_total %>%
 ```
 
 > En este punto se unificará la información de los datos poblacionales, crecimiento urbano, grupo al que pertenece debido al análisis gbmt y la infiormación de las ciudades que está almacenada en `city_info`. Si esa información es incompleta vamos a tener problemas de NA's.
+
 ```{r}
 gbmt_fit_final <- gbmt_fit_total %>%
   mutate(
@@ -624,7 +673,7 @@ gg_bar <- function(datos, year_filter = 2015) {
       y = NULL,
       x = NULL
     ) +
-    ggrepel::geom_label_repel(
+    geom_label(
       aes(
         group = group,
         label = n
@@ -703,18 +752,26 @@ save_plots <- function(plots, prefix, x_names, cluster) {
   })
 }
 
+fs::dir_create("02_output/plots/paper/line_plots_std/")
+fs::dir_create("02_output/plots/paper/line_plots/")
+fs::dir_create("02_output/plots/paper/stacked_bar_plots/")
+fs::dir_create("02_output/plots/paper/bar_plots/")
 
 # Aplicar la función a cada una de las últimas cuatro columnas
-save_plots(gbmt_fit_plots$line_plot_std, "02_output/plots/paper/line_plots_std/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$line_plot, "02_output/plots/paper/line_plots/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$stacked_bar_plot, "02_output/plots/paper/stacked_bar_plots/stackedbarplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$bar_plot, "02_output/plots/paper/bar_plots/barplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$line_plot_std, "02_output/plots/line_plots_std/ineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$line_plot, "02_output/plots/line_plots/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$stacked_bar_plot, "02_output/plots/stacked_bar_plots/stackedbarplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(gbmt_fit_plots$bar_plot, "02_output/plots/bar_plots/barplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
 
 ```
 
 ### Generación de mapas
 
-Ahora ingresaremos la información de las geometrías de ciudades y países que se encuentren bajo análisis. 
+En esta sección se unificarán las geometrías de las ciudades con la información de la columna `City` que ahora mismo viene de los datos poblacionales. Actualmente se está usando geometrías proporcionadas por `geodata::gadm()` sin embargo, no se está teniendo coincidencias adecuadas en las ciudades. **Esto debería modificarse de acuerdo a como tengan las geometrías almacenadas**.  
+
+```{r}
+library(sf)
+```
 
 ```{r}
 get_shp <- function(ISO2) {
@@ -793,6 +850,25 @@ gbmt_shp <- map(
   ~ join_data_shp(.x, shp_list)
 )
 ```
+
+
+Se espera que `gbmt_shp` sea una lista de n tamaño cantidad de modelos se hayan estimado. Por ej. `gbmt_shp[[1]]` tendría la siguiente estructura:
+
+<!-- r$> gbmt_shp[[1]]
+# A tibble: 11 × 6
+   ISO2  country                   data shp_1          shp_2  shp_inner
+   <chr> <chr>       <list<tibble[,9]>> <list>         <list> <list>   
+ 1 AR    Argentina             [14 × 9] <sf [24 × 12]> <sf>   <sf>     
+ 2 BR    Brazil               [122 × 9] <sf [27 × 12]> <sf>   <sf>     
+ 3 CL    Chile                  [9 × 9] <sf [16 × 12]> <sf>   <sf>     
+ 4 CO    Colombia              [20 × 9] <sf [33 × 12]> <sf>   <sf>     
+ 5 CR    Costa Rica             [1 × 9] <sf [7 × 12]>  <sf>   <sf>     
+ 6 GT    Guatemala              [1 × 9] <sf [22 × 12]> <sf>   <sf>     
+ 7 MX    Mexico                [48 × 9] <sf [32 × 12]> <sf>   <sf>     
+ 8 NI    Nicaragua              [1 × 9] <sf [18 × 12]> <sf>   <sf>     
+ 9 PA    Panama                 [2 × 9] <sf [13 × 12]> <sf>   <sf>     
+10 PE    Peru                  [19 × 9] <sf [26 × 12]> <sf>   <sf>     
+11 SV    El Salvador            [3 × 9] <sf [14 × 12]> <sf>   <sf>      -->
 
 Y ahora procederemos con la función encargada de la generación de los mapas que tienen a su vez correcciones específicas con fines de visualización en algunos países:
 
@@ -902,7 +978,7 @@ save_maps <- function(plot, index, cluster, x_names) {
 
 
   filename <- paste0(
-    "02_output/plots/paper/maps/mapa-cluster-",
+    "02_output/plots/maps/mapa-cluster-",
     cluster[[index]],
     "-",
     var_string,
@@ -923,6 +999,8 @@ save_maps <- function(plot, index, cluster, x_names) {
 Y por último, aplicamos la función a cada uno de los gráficos de `final_plots`:
 
 ```{r}
+fs::dir_create("02_output/plots/maps/")
+
 walk2(
   final_plots,
   seq_along(final_plots),
