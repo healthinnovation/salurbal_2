@@ -61,6 +61,10 @@ gbmt_collect_clean <- gbmt_collect %>%
   mutate(gbmt_out = map(gbmt_out, 'result'))
 ```
 
+```{r}
+gbmt_collect_clean$gbmt_out[[9]] %>%
+  summary()
+```
 
 ## Índices de validación
 
@@ -89,6 +93,20 @@ gbmt_fit_total <- gbmt_collect_clean %>%
 ```
 
 Exportar la información sobre los índices de ajuste: 
+
+```{r}
+gbmt_fit_total %>%
+  filter(lengths(x_names) == 1) %>%
+  unnest(x_names) %>%
+  select(d:scale, x_names, AIC:smallest_group) %>%
+  mutate(
+    across(where(is.numeric), round, 3)
+  ) %>%
+  arrange(x_names, ng) %>%
+  openxlsx::write.xlsx(
+    file = "02_output/tables/fit_measures_models_gbmt2.xlsx"
+  )
+```
 
 ```{r}
 gbmt_fit_total %>%
@@ -232,7 +250,7 @@ gg_bar <- function(datos, year_filter = 2015) {
       y = NULL,
       x = NULL
     ) +
-    ggrepel::geom_label_repel(
+    geom_label(
       aes(
         group = group,
         label = n
