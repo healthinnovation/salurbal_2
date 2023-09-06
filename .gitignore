@@ -39,3 +39,4 @@ vignettes/*.pdf
 .Renviron
 
 01_data/
+.directory
