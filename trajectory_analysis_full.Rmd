@@ -11,7 +11,9 @@ output:
     toc_depth: 3
     toc_float: yes
     number_sections: yes
-    code_folding:showgbmt_fit_total
+    code_folding: show
+    code_download: yes
+    theme: 
       bootswatch: flatly
     highlight: kate
     highlight_downlit: true
@@ -32,6 +34,13 @@ library(gbmt)
 library(multidplyr)
 ```
 
+Crear carpetas de trabajo:
+
+```{r}
+fs::dir_create("01_data/raw/")
+fs::dir_create("01_data/processed/")
+```
+
 # Importar datos
 
 ## Datos Crecimiento Urbano
@@ -39,7 +48,7 @@ library(multidplyr)
 Los datos de crecimiento urbano actuales solo tienen la columna `ISO2` que identifica al país, y una codificación propia `SALID1` para las ciudades, que es con lo que necesitamos realizar el match, para tener los datos de ciudad en cuanto a su crecimiento poblacional y a la vez en cuánto a su crecimiento urbano.
 
 ```{r}
-bec_backcast_l1ux <- read_csv("01_data/raw/Data Request MS242_03082023/BEC_BACKCAST_L1UX_20230302.csv")
+bec_backcast_l1ux <- read_csv("01_data/raw/BEC_BACKCAST_L1UX_20230302.csv")
 ```
 
 Se adiciona la columna `SALID0` calculado como los 3 primeros dígitos de `SALID1`.
