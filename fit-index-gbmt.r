@@ -42,8 +42,6 @@ calculate_mismatch <- function(model) {
   return(mean(abs(mismatch)))
 }
 
-gbmt_fit_total$gbmt_out[[7]]$assign
-
 calculate_SD_GMP <- function(model) {
   # Inicializar un vector para almacenar el SD-GMP para cada grupo
   sd_gmp <- numeric(length(model$prior))
