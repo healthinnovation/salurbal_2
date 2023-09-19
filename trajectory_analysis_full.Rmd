@@ -492,8 +492,14 @@ gbmt_fit_total <- gbmt_collect_clean %>%
       ~ min(table(factor(.x$assign, levels = 1:.y))) /
         sum(table(factor(.x$assign, levels = 1:.y)))
     ),
+    scale_name = case_match(
+      scale,
+      2 ~ "standardization",
+      4 ~ "logarithmic"
+    ),
     city_info = list(city_info)
   ) %>%
+  relocate(scale_name, .after = "scale") %>%
   arrange(ng, d, scale)
 ```
 
@@ -503,7 +509,8 @@ Exportar la información sobre los índices de ajuste:
 fs::dir_create("02_output/tables/")
 
 gbmt_fit_total %>%
-  select(d:scale, x_names, AIC:smallest_group) %>%
+  select(d:scale, scale_name, x_names, 
+         AIC:smallest_group) %>%
   openxlsx::write.xlsx(
     file = "02_output/tables/fit_measures_models_gbmt.xlsx"
   )
@@ -536,7 +543,7 @@ results_all <- lapply(1:length(gbmt_fit_total$gbmt_out), function(i) {
   process_regressions(
     regressions = gbmt_fit_total$gbmt_out[[i]]$reg,
     ng = gbmt_fit_total$ng[i],
-    scale = gbmt_fit_total$scale[i]
+    scale = gbmt_fit_total$scale_name[i]
   )
 })
 
@@ -609,6 +616,29 @@ gbmt_fit_final <- gbmt_fit_total %>%
     )
   )
 ```
+
+La estructura en este punto estaría quedando así:
+
+<!-- r$> gbmt_fit_final
+# A tibble: 55 × 19
+       d    ng scale scale_name      data_gbmt x_names gbmt_out     AIC     BIC
+   <dbl> <int> <dbl> <chr>           <list>    <list>  <list>     <dbl>   <dbl>
+ 1     2     1     2 standardization <tibble>  <chr>   <gbmt>    17505.  17567.
+ 2     2     1     2 standardization <tibble>  <chr>   <gbmt>    74488.  74522.
+ 3     2     1     2 standardization <tibble>  <chr>   <gbmt>     1152.   1175.
+ 4     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>    -9232.  -9176.
+ 5     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>   -17366. -17332.
+ 6     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>     1412.   1441.
+ 7     2     2     2 standardization <tibble>  <chr>   <gbmt>     8300.   8432.
+ 8     2     2     2 standardization <tibble>  <chr>   <gbmt>    51364.  51439.
+ 9     2     2     2 standardization <tibble>  <chr>   <gbmt>    -5597.  -5530.
+10     2     2     4 logarithmic     <tibble>  <chr>   <gbmt>   -21104. -20993.
+# ℹ 45 more rows
+# ℹ 10 more variables: L <dbl>, APPA <dbl>, Mismatch <dbl>, SD_GMP <dbl>,
+#   OCC <dbl>, smallest_group <dbl>, city_info <list>,
+#   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list>
+# ℹ Use `print(n = ...)` to see more rows -->
+
 
 ## Generación de Gráficos
 
@@ -743,14 +773,24 @@ Finalmente guardamos los gráficos generados:
 
 ```{r}
 # Función para guardar una lista de gráficos
-save_plots <- function(plots, prefix, x_names, cluster) {
+save_plots <- function(plots, prefix, x_names, cluster, scale_name = NULL, std = FALSE) {
   walk2(plots, seq_along(plots), function(plot, i) {
     # Crear el nombre base con las variables
     var_names <- str_replace_all(x_names[[i]], "_imp", "")
     var_string <- str_c(var_names, collapse = "-")
 
     # Crear el nombre del archivo usando el número de cluster
-    filename <- paste0(prefix, "-", cluster[[i]], "-", var_string, "_std.png")
+    filename <- paste0(prefix, "-", cluster[[i]], "-", var_string)
+
+    if (!is.null(scale_name[[i]])) {
+      filename <- paste0(filename, "-", scale_name[[i]])
+    }
+
+    if (std) {
+      filename <- paste0(filename, "-std")
+    }
+
+    filename <- paste0(filename, ".png")
 
     ggsave(
       filename,
@@ -761,17 +801,44 @@ save_plots <- function(plots, prefix, x_names, cluster) {
   })
 }
 
-fs::dir_create("02_output/plots/paper/line_plots_std/")
-fs::dir_create("02_output/plots/paper/line_plots/")
-fs::dir_create("02_output/plots/paper/stacked_bar_plots/")
-fs::dir_create("02_output/plots/paper/bar_plots/")
+fs::dir_create("02_output/plots/line_plots_std/")
+fs::dir_create("02_output/plots/line_plots/")
+fs::dir_create("02_output/plots/stacked_bar_plots/")
+fs::dir_create("02_output/plots/bar_plots/")
 
 # Aplicar la función a cada una de las últimas cuatro columnas
-save_plots(gbmt_fit_plots$line_plot_std, "02_output/plots/line_plots_std/ineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$line_plot, "02_output/plots/line_plots/lineplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$stacked_bar_plot, "02_output/plots/stacked_bar_plots/stackedbarplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
-save_plots(gbmt_fit_plots$bar_plot, "02_output/plots/bar_plots/barplot", gbmt_fit_final$x_names, gbmt_fit_final$ng)
+save_plots(
+  gbmt_fit_plots$line_plot_std, 
+  "02_output/plots/line_plots_std/lineplot",
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng, 
+  gbmt_fit_final$scale_name, 
+  std = TRUE
+)
 
+save_plots(
+  gbmt_fit_plots$line_plot, 
+  "02_output/plots/line_plots/lineplot", 
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng, 
+  gbmt_fit_final$scale_name
+)
+
+save_plots(
+  gbmt_fit_plots$stacked_bar_plot,
+   "02_output/plots/stacked_bar_plots/stackedbarplot", 
+   gbmt_fit_final$x_names, 
+   gbmt_fit_final$ng,
+   gbmt_fit_final$scale_name
+)
+
+save_plots(
+  gbmt_fit_plots$bar_plot,
+  "02_output/plots/bar_plots/barplot",
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng,
+  gbmt_fit_final$scale_name
+)
 ```
 
 ### Generación de mapas
@@ -980,7 +1047,7 @@ Se crea una función para guardar los gráficos de los modelos en función del n
 
 ```{r}
 # Función para guardar cada gráfico
-save_maps <- function(plot, index, cluster, x_names) {
+save_maps <- function(plot, index, cluster, x_names, scale_name) {
   # Crear el nombre base con las variables
   var_names <- str_replace_all(x_names[[index]], "_imp", "")
   var_string <- str_c(var_names, collapse = "-")
@@ -991,8 +1058,11 @@ save_maps <- function(plot, index, cluster, x_names) {
     cluster[[index]],
     "-",
     var_string,
+    "-",
+    scale_name[[index]],
     ".png"
   )
+
   ggsave(
     filename,
     plot,
@@ -1015,6 +1085,7 @@ walk2(
   seq_along(final_plots),
   save_maps,
   cluster = gbmt_fit_final$ng,
-  x_names = gbmt_fit_final$x_names
+  x_names = gbmt_fit_final$x_names,
+  scale_name = gbmt_fit_final$scale_name
 )
 ```
