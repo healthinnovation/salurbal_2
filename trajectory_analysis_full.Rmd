@@ -684,6 +684,15 @@ gbmt_fit_final <- gbmt_fit_total %>%
   )
 ```
 
+```{r}
+saveRDS(gbmt_fit_final,
+  file = "01_data/processed/gbmt_fit_final.rds"
+)
+
+#gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
+```
+
+
 La estructura en este punto estaría quedando así:
 
 <!-- r$> gbmt_fit_final

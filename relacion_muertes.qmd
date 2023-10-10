@@ -1,0 +1,149 @@
+---
+title: "Relación con muertes"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+# Importar datos
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+# Ruta al directorio donde se encuentran los archivos
+path_dir <- "01_data/raw/Data Request MS242_02142023/"
+
+# Leer los archivos .csv que contienen "DTHRED" en su nombre
+death_df <- purrr::map_df(
+  .x = list.files(
+    path = path_dir,
+    pattern = "DTHRED.*\\.csv$",
+    full.names = TRUE  # Esto asegura que se devuelva la ruta completa al archivo
+    ),
+  .f = readr::read_csv
+)
+
+gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
+```
+
+
+```{r}
+write_csv(death_df, file = "01_data/processed/death_df.csv")
+```
+
+
+```{r}
+deaths_by_year <- death_df %>% 
+  group_by(ISO2, SALID1, YEAR) %>% 
+  summarise(
+    deaths = sum(DTHRED3DEATHS, na.rm = TRUE)
+  ) %>% 
+  ungroup()
+
+deaths <- deaths_by_year %>% 
+  group_by(ISO2, SALID1) %>% 
+  summarise(
+    deaths = sum(deaths, na.rm = TRUE)
+  ) %>% 
+  ungroup()
+```
+
+```{r}
+gbmt_log_3 <- gbmt_fit_final %>% 
+  filter(scale_name == "logarithmic", ng == 3) %>% 
+  slice(1)
+
+gbmt_log_3 <- gbmt_log_3$gbmt_fit_total[[1]]
+
+
+gbmt_log_4 <- gbmt_fit_final %>% 
+  filter(scale_name == "logarithmic", ng == 4) %>% 
+  slice(1)
+
+gbmt_log_4 <- gbmt_log_4$gbmt_fit_total[[1]]
+
+
+gbmt_log <- gbmt_log_3 %>% 
+  bind_rows(gbmt_log_4,
+            .id = "Clusters") %>% 
+  mutate(Clusters = case_match(Clusters,
+                               "1" ~ 3,
+                               "2" ~ 4))
+```
+
+```{r}
+gbmt_log_final <- gbmt_log %>% 
+  left_join(deaths)
+```
+
+
+```{r}
+gbmt_log2 <- gbmt_log %>%
+  group_by(Clusters, pubsalid1, SALID1, group) %>% 
+  summarise(
+    across(
+      c(population_imp_norm:bectuareal1ux_imp),
+      ~ mean(.x, na.rm = TRUE)
+    )
+  ) %>% 
+  ungroup()
+
+gbmt_log_final <- gbmt_log2 %>% 
+  left_join(deaths)
+
+gbmt_log_final2 <- gbmt_log_final %>% 
+  mutate(
+    deaths_pob = deaths*100000/population_imp
+  )
+```
+
+```{r}
+gbmt_log_final2 %>% 
+  group_by(
+    Clusters
+  ) %>% 
+  summarise(
+    broom::tidy(
+      kruskal.test(deaths_pob ~ group)
+    )
+  )
+```
+
+
+```{r}
+library(ggstatsplot)
+
+grouped_ggbetweenstats(
+  data             = gbmt_log_final2,
+  x                = group,
+  y                = deaths_pob,
+  grouping.var     = Clusters,
+  # ggsignif.args    = list(textsize = 4, tip_length = 0.01),
+  # p.adjust.method  = "bonferroni",
+  # palette          = "default_jama",
+  package          = "ggsci"
+  # plotgrid.args    = list(nrow = 1),
+  # annotation.args  = list(title = "Differences in movie length by mpaa ratings for different genres")
+)
+```
+
+```{r}
+ggbetweenstats(
+  data  = gbmt_log_final2 %>% filter(Clusters == 3),
+  x     = group,
+  y     = deaths_pob
+)
+```
+
+```{r}
+ggbetweenstats(
+  data  = gbmt_log_final2 %>% filter(Clusters == 4),
+  x     = group,
+  y     = deaths_pob
+)
+```
+
+
