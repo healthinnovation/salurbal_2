@@ -1,0 +1,340 @@
+---
+title: "Relación con muertes"
+author: "Brian Norman Peña-Calero"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    anchor-sections: true
+    code-line-numbers: true
+    code-overflow: scroll
+    code-copy: hover
+    code-link: true
+    code-fold: show
+    lang: es
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# Cargar paquetes
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+options(scipen = 10)
+```
+
+# Importar datos
+
+```{r}
+gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
+deaths_by_year <- read_csv(file = "01_data/processed/deaths_by_year.csv")
+```
+
+# Formato de datos
+
+```{r}
+gbmt_log_3 <- gbmt_fit_final %>% 
+  filter(scale_name == "logarithmic", ng == 3) %>% 
+  slice(1)
+
+gbmt_log_3 <- gbmt_log_3$gbmt_fit_total[[1]]
+
+
+gbmt_log_4 <- gbmt_fit_final %>% 
+  filter(scale_name == "logarithmic", ng == 4) %>% 
+  slice(1)
+
+gbmt_log_4 <- gbmt_log_4$gbmt_fit_total[[1]]
+
+
+gbmt_log <- gbmt_log_3 %>% 
+  bind_rows(gbmt_log_4,
+            .id = "Clusters") %>% 
+  mutate(Clusters = case_match(Clusters,
+                               "1" ~ 3,
+                               "2" ~ 4))
+```
+
+Unificar datos:
+
+```{r}
+gbmt_log_merged <- gbmt_log %>%
+  select(Clusters, ISO2, SALID1, YEAR = year, population_imp_norm:group) %>% 
+  inner_join(
+    deaths_by_year
+  ) %>% 
+  mutate(deaths_per_100k = (deaths / population_imp) * 100000)
+```
+
+# Gráfico inicial de promedio de muertes
+
+```{r}
+gbmt_log_merged %>% 
+  group_by(Clusters, group, YEAR) %>% 
+  summarise(
+    deaths_per_100k = mean(deaths_per_100k)
+  ) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = YEAR, y = deaths_per_100k, color = as.factor(group))) +
+  geom_line(aes(group = group)) +
+  geom_point() +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
+       x = "Año", y = "Muertes por 100,000 habitantes", color = "Grupo") +
+  facet_wrap(vars(Clusters)) +
+  theme_minimal()
+```
+
+
+```{r} 
+#| eval: false
+ggsave(
+  filename = "02_output/plots/promedio_muertes_group_log.png",
+  dpi = 300,
+  bg = "white"
+)
+```
+
+
+# Modelo lineal mixto
+
+## Modelo 1 (sin offset)
+
+### Lineal
+
+```{r}
+model_3 <- lmer(
+  deaths_per_100k ~ YEAR * group + (1|SALID1), 
+  data = gbmt_log_merged %>% filter(Clusters == 3)
+)
+summary(model_3)
+
+model_4 <- lmer(
+  deaths_per_100k ~ YEAR * group + (1|SALID1), 
+  data = gbmt_log_merged %>% filter(Clusters == 4)
+)
+summary(model_4)
+```
+
+### Poisson
+
+```{r}
+model_3_poisson <- glmer(
+  deaths ~ YEAR * group + (1|SALID1), 
+  data = gbmt_log_merged %>% filter(Clusters == 3),
+  family = poisson(link = "log")
+)
+
+summary(model_3_poisson)
+
+model_4_poisson <- glmer(
+  deaths ~ YEAR * group + (1|SALID1), 
+  data = gbmt_log_merged %>% filter(Clusters == 4),
+  family = poisson(link = "log")
+)
+summary(model_4_poisson)
+```
+
+## Modelo 2 - Con offset
+
+### Estimación
+
+Estimación de los modelos con la información poblacional como offset
+
+```{r}
+model_3_poisson_off <- glmer(
+  deaths ~ YEAR * group + (1|SALID1)  + offset(log(population_imp)), 
+  data = gbmt_log_merged %>% filter(Clusters == 3),
+  family = poisson(link = "log")
+)
+
+summary(model_3_poisson_off)
+
+model_4_poisson_off <- glmer(
+  deaths ~ YEAR * group + (1|SALID1) + offset(log(population_imp)), 
+  data = gbmt_log_merged %>% filter(Clusters == 4),
+  family = poisson(link = "log")
+)
+summary(model_4_poisson_off)
+
+```
+
+Ingreso de los valores predictivos para los modelos de 3 y 4 clústers:
+
+```{r}
+gbmt_log_merged <- gbmt_log_merged %>% 
+  group_nest(Clusters) %>% 
+  mutate(
+    data = map2(
+      data, Clusters,
+      ~ case_when(
+        .y == 3 ~ mutate(
+          .x, 
+          predicted_deaths = predict(model_3_poisson_off, type = "response"),
+        ),
+        .y == 4 ~ mutate(
+          .x, 
+          predicted_deaths = predict(model_4_poisson_off, type = "response"),
+        ),
+      )
+    )
+  ) %>% 
+  unnest()
+
+gbmt_log_merged <- gbmt_log_merged %>% 
+  mutate(
+    predicted_deaths_100k = predicted_deaths / population_imp * 100000
+  )
+```
+
+### Gráfico
+
+Debido a que se ha agregado a los interceptos de las ciudades como efecto aleatorio, entonces las estimaciones y predicciones van a variar de ciudad a ciudad. Para poder visualizarlo, se podría resumir los datos con su media.
+
+```{r}
+#| dpi: 300
+#| fig-width: 7
+#| fig-height: 4.5
+plot_poisson_offset <- gbmt_log_merged %>% 
+  group_by(Clusters, group, YEAR) %>% 
+  summarise(
+    across(
+      c(predicted_deaths_100k, 
+        deaths_per_100k),
+      mean
+    )
+  ) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = YEAR, 
+           y = predicted_deaths_100k,
+           color = group)) + 
+  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+             position = position_jitter(h = 0.2)) +  # Datos observados
+  geom_line() +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo",
+       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
+  facet_wrap(vars(Clusters)) +
+  theme_minimal()
+
+plot_poisson_offset
+```
+
+
+
+```{r}
+ggsave(
+  plot_poisson_offset,
+  filename = "02_output/plots/promedio_muertes_group_poisson.png",
+  dpi = 300,
+  bg = "white",
+  width = 7,
+  height = 4.5
+)
+```
+
+## Modelo 3 - Con offset sin efectos aleatorios
+
+### Estimación
+
+Las estimaciones no consideran variaciones entre las ciudades
+
+```{r}
+model_3_poisson_off2 <- glm(
+  deaths ~ YEAR * group + offset(log(population_imp)), 
+  data = gbmt_log_merged %>% filter(Clusters == 3),
+  family = poisson(link = "log")
+)
+
+summary(model_3_poisson_off2)
+
+model_4_poisson_off2 <- glm(
+  deaths ~ YEAR * group + offset(log(population_imp)), 
+  data = gbmt_log_merged %>% filter(Clusters == 4),
+  family = poisson(link = "log")
+)
+summary(model_4_poisson_off2)
+
+```
+
+Ingreso de las predicciones en el df:
+
+```{r}
+gbmt_log_merged2 <- gbmt_log_merged %>% 
+  group_nest(Clusters) %>% 
+  mutate(
+    data = map2(
+      data, Clusters,
+      ~ case_when(
+        .y == 3 ~ mutate(
+          .x, 
+          predicted_deaths = predict(model_3_poisson_off2, type = "response"),
+        ),
+        .y == 4 ~ mutate(
+          .x, 
+          predicted_deaths = predict(model_4_poisson_off2, type = "response"),
+        ),
+      )
+    )
+  ) %>% 
+  unnest()
+
+gbmt_log_merged2 <- gbmt_log_merged2 %>% 
+  mutate(
+    predicted_deaths_100k = predicted_deaths / population_imp * 100000
+  )
+```
+
+
+### Gráfico
+
+Gráfico de los datos resumidos:
+
+```{r}
+#| dpi: 300
+#| fig-width: 7
+#| fig-height: 4.5
+gbmt_log_merged2 %>% 
+  group_by(Clusters, group, YEAR) %>%
+  summarise(
+    across(
+      c(predicted_deaths_100k,
+        deaths_per_100k),
+      mean
+    )
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(x = YEAR, 
+           y = predicted_deaths_100k,
+           color = group)) + 
+  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+             position = position_jitter(h = 0.2)) +  # Datos observados
+  geom_line(linewidth = 1) +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
+       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
+  facet_wrap(vars(Clusters)) +
+  theme_minimal()
+```
+
+Sin resumir:
+
+```{r}
+#| dpi: 300
+#| fig-width: 7
+#| fig-height: 4.5
+gbmt_log_merged2 %>% 
+  ggplot(aes(x = YEAR, 
+           y = predicted_deaths_100k,
+           color = group)) + 
+  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+             position = position_jitter(h = 0.2)) +  # Datos observados
+  geom_line(linewidth = 1) +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
+       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
+  facet_wrap(vars(Clusters)) +
+  theme_minimal()
+```
+
+
