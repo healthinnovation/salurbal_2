@@ -1,0 +1,59 @@
+---
+title: "Pre-procesamiento de los datos sobre muertes"
+author: "Brian Norman Peña-Calero"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    anchor-sections: true
+    code-line-numbers: true
+    code-overflow: scroll
+    code-copy: hover
+    code-link: true
+    code-fold: show
+    lang: es
+    embed-resources: true
+---
+
+# Importar paquetes
+
+```{r}
+library(tidyverse)
+```
+
+# Importar datos
+
+```{r}
+# Ruta al directorio donde se encuentran los archivos
+path_dir <- "01_data/raw/Data Request MS242_02142023/"
+
+# Leer los archivos .csv que contienen "DTHRED" en su nombre
+death_df <- purrr::map_df(
+  .x = list.files(
+    path = path_dir,
+    pattern = "DTHRED.*\\.csv$",
+    full.names = TRUE  # Esto asegura que se devuelva la ruta completa al archivo
+    ),
+  .f = readr::read_csv
+)
+```
+
+# Resumen de datos por años
+
+```{r}
+deaths_by_year <- death_df %>% 
+  group_by(ISO2, SALID1, YEAR) %>% 
+  summarise(
+    deaths = sum(DTHRED3DEATHS, na.rm = TRUE)
+  ) %>% 
+  ungroup()
+```
+
+# Exportar datos
+
+```{r}
+write_csv(deaths_by_year, file = "01_data/processed/deaths_by_year.csv")
+```
+
+
