@@ -1271,10 +1271,18 @@ gbmt_shp_interest <- map(
 
 ```{r}
 country_data <- map(shp_list, 1) %>% 
-  bind_rows()
+  bind_rows() %>% 
+  mutate(
+    study = c(rep(TRUE, 11), rep(FALSE, 10))
+  )
+
+countries_by_study <- country_data %>% 
+  as_tibble() %>% 
+  select(GID_0, study)
 
 level1_data <- map(shp_list, 2) %>% 
-  bind_rows()
+  bind_rows() %>% 
+  left_join(countries_by_study)
 ```
 
 ```{r}
@@ -1321,7 +1329,14 @@ custom_pal_teal <- c(
 
 ggmap <- level1_data %>%
   ggplot() +
-  geom_sf(linewidth = 0.05) +
+  geom_sf(
+    aes(fill = study),
+    linewidth = 0.05
+  ) +
+  scale_fill_manual(
+    values = c("#bdbdbd", "#e5e5e5"),
+    guide = "none"
+  ) + 
   geom_sf(
     data = country_data,
     linewidth = 0.35, 
