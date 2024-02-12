@@ -1244,25 +1244,25 @@ gbmt_interest$gbmt_fit_total[[1]] <- gbmt_interest$gbmt_fit_total[[1]] %>%
   arrange(pubsalid1, year) %>%
   group_by(ISO2, country, group, pubsalid1) %>%
   mutate(
-    delta_population_imp = population_imp - lag(population_imp),
-    delta_bectuareal1ux_imp = bectuareal1ux_imp - lag(bectuareal1ux_imp),
-    delta_population_imp_norm = population_imp_norm - lag(population_imp_norm),
-    delta_bectuareal1ux_imp_norm = bectuareal1ux_imp_norm - lag(bectuareal1ux_imp_norm)
+    perc_population_imp = (population_imp - lag(population_imp))/lag(population_imp),
+    perc_bectuareal1ux_imp = (bectuareal1ux_imp - lag(bectuareal1ux_imp))/lag(bectuareal1ux_imp),
+    perc_population_imp_norm = (population_imp_norm - lag(population_imp_norm))/lag(population_imp_norm),
+    perc_bectuareal1ux_imp_norm = (bectuareal1ux_imp_norm - lag(bectuareal1ux_imp_norm))/lag(bectuareal1ux_imp_norm)
   ) %>%
   summarise(
-    median_delta_population = median(delta_population_imp, na.rm = TRUE),
-    median_delta_bectuareal = median(delta_bectuareal1ux_imp, na.rm = TRUE),
-    median_delta_population_norm = median(delta_population_imp_norm, na.rm = TRUE),
-    median_delta_bectuareal_norm = median(delta_bectuareal1ux_imp_norm, na.rm = TRUE)
+    mean_perc_population = mean(perc_population_imp, na.rm = TRUE),
+    mean_perc_bectuareal = mean(perc_bectuareal1ux_imp, na.rm = TRUE),
+    mean_perc_population_norm = mean(perc_population_imp_norm, na.rm = TRUE),
+    mean_perc_bectuareal_norm = mean(perc_bectuareal1ux_imp_norm, na.rm = TRUE)
   ) %>%
   ungroup() %>%
   mutate(
-    tercile_median_population = ntile(median_delta_population, 3),
-    tercile_median_bectuareal = ntile(median_delta_bectuareal, 3),
-    tercile_median_population_norm = ntile(median_delta_population_norm, 3),
-    tercile_median_bectuareal_norm = ntile(median_delta_bectuareal_norm, 3)
+    tercile_perc_population = ntile(mean_perc_population, 3),
+    tercile_perc_bectuareal = ntile(mean_perc_bectuareal, 3),
+    tercile_perc_population_norm = ntile(mean_perc_population_norm, 3),
+    tercile_perc_bectuareal_norm = ntile(mean_perc_bectuareal_norm, 3)
   )
-
+ 
 gbmt_shp_interest <- map(
   gbmt_interest$gbmt_fit_total,
   ~ join_data_shp2(.x, shp_list)
@@ -1303,12 +1303,10 @@ city_data <- gbmt_shp_interest[[1]] %>%
 library(biscale)
 ```
 
-
-
 ```{r}
 city_data_biscale <- bi_class(city_data,
-  x = median_delta_population,
-  y = median_delta_bectuareal,
+  x = mean_perc_population,
+  y = mean_perc_bectuareal,
   style = "quantile", dim = 3
 )
 
@@ -1323,9 +1321,6 @@ custom_pal_teal <- c(
   "2-3" = "#3a4e78",
   "3-3" = "#311e3b"
 )
-
-
-
 
 ggmap <- level1_data %>%
   ggplot() +
@@ -1357,8 +1352,8 @@ ggmap <- level1_data %>%
 legend <- bi_legend(
   pal = custom_pal_teal,
   dim = 3,
-  xlab = "Higher Δ Population",
-  ylab = "Higher Δ Urban Area",
+  xlab = "Higher Δ% Population",
+  ylab = "Higher Δ% Urban Area",
   size = 6
 )
 
