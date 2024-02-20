@@ -14,9 +14,12 @@ format:
     code-fold: show
     lang: es
     embed-resources: true
+    
 editor_options: 
   chunk_output_type: console
 ---
+
+<!-- Verificar el optimizador utilizado y evaluar el uso de binomial negativo -->
 
 # Cargar paquetes
 
@@ -24,7 +27,12 @@ editor_options:
 library(tidyverse)
 library(lme4)
 library(lmerTest)
-options(scipen = 10)
+library(merDeriv)
+library(performance)
+library(parameters)
+# options(scipen = 9)
+
+options(parameters_labels = TRUE) 
 ```
 
 # Importar datos
@@ -70,6 +78,74 @@ gbmt_log_merged <- gbmt_log %>%
   mutate(deaths_per_100k = (deaths / population_imp) * 100000)
 ```
 
+# Tabla descriptiva
+
+```{r}
+gbmt_log_descriptive <- gbmt_log %>%
+  filter(Clusters == 4) %>% 
+  select(country, ISO2, SALID1, YEAR = year, population_imp:group) %>% 
+  inner_join(
+    deaths_by_year
+  ) %>% 
+  mutate(
+    country = str_to_title(country),
+    deaths_per_100k = (deaths / population_imp) * 100000
+  ) %>% 
+  select(-c(ISO2, SALID1, YEAR, deaths)) %>% 
+  relocate(group, .after = deaths_per_100k)
+```
+
+```{r}
+labelled::var_label(gbmt_log_descriptive) <- list(
+  country = "Country",
+  population_imp = "Population",
+  bectuareal1ux_imp = "Urban Area",
+  deaths_per_100k	 = "Deaths per 100K",
+  group = "Clusters"
+)
+```
+
+
+```{r}
+library(gtsummary)
+tab1 <- gbmt_log_descriptive %>% 
+  tbl_summary(
+    by = group,
+    percent = "row"
+  ) %>% 
+  modify_header(label = "") %>%
+  bold_labels() %>% 
+  add_overall(last = TRUE)
+
+tab1
+
+tab2 <- gbmt_log_descriptive %>% 
+  tbl_summary(
+    by = country,
+    percent = "row"
+  ) %>% 
+  modify_header(label = "") %>%
+  bold_labels() %>% 
+  add_overall(last = TRUE)
+
+tab2
+```
+
+```{r}
+#| eval: false
+
+tab1 %>%
+  as_flex_table() %>%
+  flextable::save_as_docx(path = "./02_output/tables/descriptive1.docx")
+
+tab2 %>%
+  as_flex_table() %>%
+  flextable::save_as_docx(path = "./02_output/tables/descriptive2.docx")
+```
+
+
+
+
 # Gráfico inicial de promedio de muertes
 
 ```{r}
@@ -82,6 +158,7 @@ gbmt_log_merged %>%
   ggplot(aes(x = YEAR, y = deaths_per_100k, color = as.factor(group))) +
   geom_line(aes(group = group)) +
   geom_point() +
+  
   labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
        x = "Año", y = "Muertes por 100,000 habitantes", color = "Grupo") +
   facet_wrap(vars(Clusters)) +
@@ -110,13 +187,19 @@ model_3 <- lmer(
   deaths_per_100k ~ YEAR * group + (1|SALID1), 
   data = gbmt_log_merged %>% filter(Clusters == 3)
 )
-summary(model_3)
+
+performance(model_3) %>% print_html()
+parameters(model_3) %>% print_html()
+parameters(model_3, standardize = "basic") %>% print_html()
 
 model_4 <- lmer(
   deaths_per_100k ~ YEAR * group + (1|SALID1), 
   data = gbmt_log_merged %>% filter(Clusters == 4)
 )
-summary(model_4)
+
+performance(model_4) %>% print_html()
+parameters(model_4) %>% print_html()
+parameters(model_4, standardize = "basic") %>% print_html()
 ```
 
 ### Poisson
@@ -128,14 +211,22 @@ model_3_poisson <- glmer(
   family = poisson(link = "log")
 )
 
-summary(model_3_poisson)
+performance(model_3_poisson) %>% print_html()
+
+parameters(model_3_poisson) %>% print_html()
+parameters(model_3_poisson, exponentiate = TRUE) %>% print_html()
+
 
 model_4_poisson <- glmer(
   deaths ~ YEAR * group + (1|SALID1), 
   data = gbmt_log_merged %>% filter(Clusters == 4),
   family = poisson(link = "log")
 )
-summary(model_4_poisson)
+
+performance(model_4_poisson) %>% print_html()
+
+parameters(model_4_poisson) %>% print_html()
+parameters(model_4_poisson, exponentiate = TRUE) %>% print_html()
 ```
 
 ## Modelo 2 - Con offset
@@ -151,15 +242,21 @@ model_3_poisson_off <- glmer(
   family = poisson(link = "log")
 )
 
-summary(model_3_poisson_off)
+performance(model_3_poisson_off) %>% print_html()
+
+parameters(model_3_poisson_off) %>% print_html()
+parameters(model_3_poisson_off, exponentiate = TRUE) %>% print_html()
 
 model_4_poisson_off <- glmer(
   deaths ~ YEAR * group + (1|SALID1) + offset(log(population_imp)), 
   data = gbmt_log_merged %>% filter(Clusters == 4),
   family = poisson(link = "log")
 )
-summary(model_4_poisson_off)
 
+performance(model_4_poisson_off) %>% print_html()
+
+parameters(model_4_poisson_off) %>% print_html()
+parameters(model_4_poisson_off, exponentiate = TRUE) %>% print_html()
 ```
 
 Ingreso de los valores predictivos para los modelos de 3 y 4 clústers:
@@ -235,6 +332,25 @@ ggsave(
 )
 ```
 
+
+```{r}
+#| dpi: 300
+#| fig-width: 7
+#| fig-height: 4.5
+gbmt_log_merged %>% 
+  ggplot(aes(x = YEAR, 
+           y = predicted_deaths_100k,
+           color = group)) + 
+  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+             position = position_jitter(h = 0.2)) +  # Datos observados
+  geom_line(aes(group = SALID1)) +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo",
+       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
+  facet_grid(vars(Clusters), vars(group)) +
+  # facet_wrap(vars(Clusters)) +
+  theme_minimal()
+```
+
 ## Modelo 3 - Con offset sin efectos aleatorios
 
 ### Estimación
@@ -248,15 +364,20 @@ model_3_poisson_off2 <- glm(
   family = poisson(link = "log")
 )
 
-summary(model_3_poisson_off2)
+performance(model_3_poisson_off2) %>% print_html()
+
+parameters(model_3_poisson_off2) %>% print_html()
+parameters(model_3_poisson_off2, exponentiate = TRUE) %>% print_html()
 
 model_4_poisson_off2 <- glm(
   deaths ~ YEAR * group + offset(log(population_imp)), 
   data = gbmt_log_merged %>% filter(Clusters == 4),
   family = poisson(link = "log")
 )
-summary(model_4_poisson_off2)
+performance(model_4_poisson_off2) %>% print_html()
 
+parameters(model_4_poisson_off2) %>% print_html()
+parameters(model_4_poisson_off2, exponentiate = TRUE) %>% print_html()
 ```
 
 Ingreso de las predicciones en el df:
