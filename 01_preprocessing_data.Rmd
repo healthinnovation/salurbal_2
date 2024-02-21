@@ -32,20 +32,50 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Load packages
+# Carga de paquetes
 
 ```{r}
 library(tidyverse)
+library(sf)
 ```
 
 # Importar datos
 
+```{r}
+salid1_pubsalid1 <- readr::read_csv("01_data/raw/SALID1_PUBSALID1.csv")
+gdb_path <- "01_data/raw/Data Request MS242_09222023/MS242_L1.gdb"
+gdb_salurbal <- st_layers(gdb_path)
+
+cities_l1ad <- st_read(
+  gdb_path,
+  gdb_salurbal$name[[1]]
+) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(SALID1, .after = PUBSALID1)
+
+cities_l1ad_noislands <- st_read(
+  gdb_path,
+  gdb_salurbal$name[[2]]
+) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(SALID1, .after = PUBSALID1)
+```
+
+
 ## Datos Crecimiento Urbano
 
-Los datos de crecimiento urbano actuales solo tienen la columna `ISO2` que identifica al país, y una codificación propia `SALID1` para las ciudades, que es con lo que necesitamos realizar el match, para tener los datos de ciudad en cuanto a su crecimiento poblacional y a la vez en cuánto a su crecimiento urbano.
+Los datos de crecimiento urbano tienen columna `ISO2` que identifica al paós, y una codificación propia llamada `SALID1`, con la cual se tiene una data que indica a que ciudades corresponden (`salid1_pubsalid1`).
 
 ```{r}
-bec_backcast_l1ux <- read_csv("01_data/raw/Data Request MS242_03082023/BEC_BACKCAST_L1UX_20230302.csv")
+bec_backcast_l1ux <- read_csv("01_data/raw/BEC_BACKCAST_L1UX_20230302.csv")
 ```
 
 Se adiciona la columna `SALID0` calculado como los 3 primeros dígitos de `SALID1`.
@@ -55,16 +85,28 @@ bec_backcast_l1ux <- bec_backcast_l1ux %>%
   mutate(
     SALID0 = str_sub(SALID1, 1, 3),
     .before = SALID1
-  )
-bec_backcast_l1ux
+  ) %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(PUBSALID1, .before = SALID1)
 ```
 
 ## Datos Poblacionales
 
-Para el caso de los datos poblacionales, se tiene la identificación en nombre del país y la ciudad. Se agrega el identificador `ISO2`, para fines de matching.
+De forma similar en los datos poblaciones, se hace el match de `SALID1` para poder identificar a las ciudades que corresponde.
 
 ```{r}
-population <- readxl::read_excel("01_data/raw/df.xlsx")
+population <- st_read(
+  gdb_path,
+  gdb_salurbal$name[[3]]
+) %>%
+  as_tibble() %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(SALID1, .after = PUBSALID1) %>%
+  drop_na(PUBSALID1)
 ```
 
 ```{r}
@@ -99,42 +141,34 @@ population
 Se aplica una pequeña corrección a los datos numéricos poblacionales que contienen caracteres como `-` y `" "` (espacios) para representar valores perdidos.
 
 ```{r}
-population <- population %>% 
+population <- population %>%
   mutate(
-    across(everything(),
-           ~ na_if(., "-")),
-    across(c(`1945`:`2022`),
-           ~ str_remove_all(., " ")),
-    across(c(`1945`:`2022`),
-           as.numeric),
+    across(
+      F1945:F2022,
+      as.numeric
+    )
   )
+
+population
 ```
 
-Para operaciones futuras, se crea temporalmente un falso `SALID1` que permitirá tener una identificación única por ciudad y posteriormente unificar los datos.
+> Guardamos la información de las ciudades para futuras referencias
 
 ```{r}
-population <- population %>% 
-  group_by(ISO2) %>% 
-  mutate(
-    SALID1 = paste0(SALID0, 100 + seq_len(n())),
-    SALID1 = as.numeric(SALID1),
-    .after = SALID0
-  ) %>% 
-  ungroup()
-```
-
-> Se crea este objeto temporal a partir del formato en el objeto `population` que contiene la información de ISO2, SALID0, SALID1, country, City. Aquí debería reemplazarse con el una data que brinde una información equivalente.
-
-```{r eval=FALSE}
 city_info <- population %>%
   select(
-    ISO2:City
+    ISO2:City, PUBSALID1:SALID1
   )
+```
 
+
+```{r eval=FALSE}
 saveRDS(
   city_info,
   file = "01_data/processed/city_info.rds"
 )
+
+#city_info <- readRDS("01_data/processed/city_info.rds")
 ```
 
 
@@ -155,11 +189,11 @@ Los datos de crecimiento urbano proporcionado tienen información cada 5 años, 
 
 ```{r}
 bectuareal_tidy <- bec_backcast_l1ux %>%
-  distinct(SALID1) %>%
+  distinct(PUBSALID1) %>%
   crossing(YEAR = 1985:2015) %>%
   left_join(
     bec_backcast_l1ux %>%
-      select(SALID1, YEAR, BECTUAREAL1UX)
+      select(PUBSALID1, YEAR, BECTUAREAL1UX)
   ) %>%
   janitor::clean_names()
 ```
@@ -168,7 +202,7 @@ Ahora se procede a crear el formato nest:
 
 ```{r}
 bectuareal_imp <- bectuareal_tidy %>%
-  group_nest(salid1) %>%
+  group_nest(pubsalid1) %>%
   mutate(
     ts_data = map(
       data,
@@ -218,25 +252,30 @@ bectuareal_imp_merge <- bectuareal_imp_clean %>%
   )
 
 bectuareal_imp_merge <- bectuareal_imp_merge %>% 
-  select(salid1, data_imputation) %>% 
+  select(pubsalid1, data_imputation) %>% 
   unnest(cols = c(data_imputation)) %>% 
   rename(bectuareal1ux_imp = x)
 ```
 
 ## Datos poblacionales
 
+
 Necesitamos ordenar los datos y darle un formato **nested**. Observamos que los datos poblacionales con los que se trabaja tiene 648 ciudades.
 
 ```{r}
 population_nested <- population %>%
   janitor::clean_names() %>%
-  select(salid1, x1945:x2015) %>%
+  rename_with(
+    ~ str_replace(., "f", "x"),
+    f1945:f2015
+  ) %>%
+  select(pubsalid1, x1945:x2015) %>%
   pivot_longer(
     cols = x1945:x2015,
     names_to = "year",
     values_to = "population"
   ) %>%
-  group_nest(salid1)
+  group_nest(pubsalid1)
 population_nested
 ```
 
@@ -331,7 +370,7 @@ population_imp_merge <- population_imp_clean %>%
   )
 
 population_imp_merge <- population_imp_merge %>%
-  select(salid1, data_imputation) %>%
+  select(pubsalid1, data_imputation) %>%
   unnest(cols = c(data_imputation)) %>%
   rename(population_imp = x) %>%
   mutate(
@@ -341,6 +380,7 @@ population_imp_merge <- population_imp_merge %>%
 
 population_imp_merge
 ```
+
 
 # Unificación de datos
 
@@ -352,7 +392,7 @@ Se usa la función `full_join` para tener la posibilidad de analizar los datos p
 pop_bectuareal <- full_join(
   population_imp_merge,
   bectuareal_imp_merge,
-  by = join_by(salid1, year) 
+  by = join_by(pubsalid1, year)
 )
 ```
 
