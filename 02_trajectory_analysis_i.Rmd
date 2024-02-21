@@ -57,19 +57,20 @@ Se crearán 3 objetos:
 ```{r}
 pop_bectu_gbmt_df <- pop_bectuareal %>%
   select(
-    salid1, year,
+    pubsalid1, year,
     population_imp, bectuareal1ux_imp
   ) %>%
   drop_na()
 
 pop_gbmt_df <- pop_bectuareal %>%
-  select(salid1, year, population_imp) %>%
+  select(pubsalid1, year, population_imp) %>%
   drop_na(population_imp)
 
 bectu_gbmt_df <- pop_bectuareal %>%
-  select(salid1, year, bectuareal1ux_imp) %>%
+  select(pubsalid1, year, bectuareal1ux_imp) %>%
   drop_na(bectuareal1ux_imp) 
 ```
+
 
 # Estimación
 
@@ -87,7 +88,7 @@ Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conj
 gbmt_matrix <- expand_grid(
   d = 2,
   ng = 1:10,
-  scale = 2,
+  scale = c(2, 4),
   tibble(
     data_gbmt = list(
       pop_bectu_gbmt_df,
@@ -116,7 +117,7 @@ gbmt_outputs <- gbmt_matrix %>%
       ), 
       ~ gbmt_safe(
         x.names = ..2,
-        unit = "salid1",
+        unit = "pubsalid1",
         time = "year",
         data = as.data.frame(..1),
         d = ..3,
@@ -131,9 +132,201 @@ gbmt_collect <- gbmt_outputs %>%
 ```
 
 ```{r eval=FALSE}
+fs::dir_create("01_data/processed/")
+
 saveRDS(gbmt_collect,
   file = "01_data/processed/gbmt_collect_pop_bectu.rds"
 )
+
+#gbmt_collect <- readRDS("01_data/processed/gbmt_collect_pop_bectu.rds")
 ```
 
+
+```{r}
+gbmt_collect_errors <- gbmt_collect %>% 
+  filter(map_lgl(.$gbmt_out, ~ !is.null(.x$error)))
+
+gbmt_collect_clean <- gbmt_collect %>% 
+  filter(map_lgl(.$gbmt_out, ~ is.null(.x$error))) %>% 
+  mutate(gbmt_out = map(gbmt_out, 'result'))
+```
+
+
+# Índices de validación
+
+```{r}
+source("fit-index-gbmt.r")
+```
+
+```{r}
+gbmt_fit_total <- gbmt_collect_clean %>%
+  mutate(
+    AIC = map_dbl(gbmt_out, AIC),
+    BIC = map_dbl(gbmt_out, BIC),
+    L = map_dbl(gbmt_out, logLik),
+    APPA = map_dbl(gbmt_out, ~ mean(.$appa)),
+    Mismatch = map_dbl(gbmt_out, calculate_mismatch),
+    SD_GMP = map_dbl(gbmt_out, calculate_SD_GMP),
+    OCC = map_dbl(gbmt_out, calculate_OCC),
+    smallest_group = map2_dbl(
+      gbmt_out, ng,
+      ~ min(table(factor(.x$assign, levels = 1:.y))) /
+        sum(table(factor(.x$assign, levels = 1:.y)))
+    ),
+    scale_name = case_match(
+      scale,
+      2 ~ "standardization",
+      4 ~ "logarithmic"
+    ),
+    city_info = list(city_info)
+  ) %>%
+  relocate(scale_name, .after = "scale") %>%
+  arrange(ng, d, scale)
+```
+
+Exportar la información sobre los índices de ajuste: 
+
+```{r}
+fs::dir_create("02_output/tables/")
+
+gbmt_fit_total %>%
+  select(d:scale, scale_name, x_names, 
+         AIC:smallest_group) %>%
+  openxlsx::write.xlsx(
+    file = "02_output/tables/fit_measures_models_gbmt.xlsx"
+  )
+```
+
+Exportar el output de las regresiones:
+
+```{r}
+# Esta función procesa un único conjunto de regresiones
+process_regressions <- function(regressions, ng, scale) {
+  result_list <- list()
+
+  for (group in names(regressions)) {
+    for (var_name in names(regressions[[group]])) {
+      tmp <- broom::tidy(regressions[[group]][[var_name]])
+      tmp$variable <- var_name
+      tmp$ng <- ng
+      tmp$scale <- scale
+      tmp$group <- as.integer(group)
+
+      result_list[[length(result_list) + 1]] <- tmp
+    }
+  }
+
+  bind_rows(result_list)
+}
+
+# Procesa todas las regresiones en gbmt_fit_total$gbmt_out
+results_all <- lapply(1:length(gbmt_fit_total$gbmt_out), function(i) {
+  process_regressions(
+    regressions = gbmt_fit_total$gbmt_out[[i]]$reg,
+    ng = gbmt_fit_total$ng[i],
+    scale = gbmt_fit_total$scale_name[i]
+  )
+})
+
+# Convierte los resultados en un formato más manejable
+resultados_tidy <- bind_rows(results_all)
+```
+
+```{r eval=FALSE}
+saveRDS(
+  resultados_tidy, 
+  file = "02_output/tables/resultados_tidy_reg.rds"
+)
+```
+
+# Re-ingreso de información
+
+
+```{r}
+gbmt_fit_total <- gbmt_fit_total %>%
+  mutate(
+    data_gbmt_extract = map(
+      gbmt_out,
+      ~ .x$data.norm %>%
+        rename_with(
+          ~ paste0(., "_norm"),
+          contains("_imp")
+        ) %>%
+        left_join(
+          .x$data.orig,
+          by = join_by(pubsalid1, year)
+        ) %>%
+        as_tibble()
+    ),
+    assign_list = map(
+      gbmt_out,
+      ~ enframe(.x$assign.list) %>%
+      unnest(cols = c(value)) %>%
+      mutate(
+        pubsalid1 = as.factor(value)
+      ) %>%
+      select(pubsalid1, group = name)
+    )
+  )
+```
+
+> En este punto se unificará la información de los datos poblacionales, crecimiento urbano, grupo al que pertenece debido al análisis gbmt y la infiormación de las ciudades que está almacenada en `city_info`. Si esa información es incompleta vamos a tener problemas de NA's.
+
+```{r}
+gbmt_fit_final <- gbmt_fit_total %>%
+  mutate(
+    gbmt_fit_total = pmap(
+      list(
+        data_gbmt_extract,
+        assign_list,
+        city_info
+      ),
+      ~ left_join(
+        ..1,
+        ..2,
+        by = join_by(pubsalid1)
+      ) %>%
+      # mutate(
+      #   SALID0 = str_sub(salid1, 1, 3)
+      # ) %>%
+      left_join(
+        ..3 %>%
+          rename(pubsalid1 = PUBSALID1) %>%
+          mutate(pubsalid1 = factor(pubsalid1)),
+        by = join_by(pubsalid1)
+      )
+    )
+  )
+```
+
+```{r}
+saveRDS(gbmt_fit_final,
+  file = "01_data/processed/gbmt_fit_final.rds"
+)
+
+#gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
+```
+
+
+La estructura en este punto estaría quedando así:
+
+<!-- r$> gbmt_fit_final
+# A tibble: 55 × 19
+       d    ng scale scale_name      data_gbmt x_names gbmt_out     AIC     BIC
+   <dbl> <int> <dbl> <chr>           <list>    <list>  <list>     <dbl>   <dbl>
+ 1     2     1     2 standardization <tibble>  <chr>   <gbmt>    17505.  17567.
+ 2     2     1     2 standardization <tibble>  <chr>   <gbmt>    74488.  74522.
+ 3     2     1     2 standardization <tibble>  <chr>   <gbmt>     1152.   1175.
+ 4     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>    -9232.  -9176.
+ 5     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>   -17366. -17332.
+ 6     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>     1412.   1441.
+ 7     2     2     2 standardization <tibble>  <chr>   <gbmt>     8300.   8432.
+ 8     2     2     2 standardization <tibble>  <chr>   <gbmt>    51364.  51439.
+ 9     2     2     2 standardization <tibble>  <chr>   <gbmt>    -5597.  -5530.
+10     2     2     4 logarithmic     <tibble>  <chr>   <gbmt>   -21104. -20993.
+# ℹ 45 more rows
+# ℹ 10 more variables: L <dbl>, APPA <dbl>, Mismatch <dbl>, SD_GMP <dbl>,
+#   OCC <dbl>, smallest_group <dbl>, city_info <list>,
+#   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list>
+# ℹ Use `print(n = ...)` to see more rows -->
 
