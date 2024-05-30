@@ -71,6 +71,7 @@ gbmt_log <- gbmt_log_3 %>%
                                "2" ~ 4))
 ```
 
+
 Unificar datos:
 
 ```{r}
@@ -85,6 +86,10 @@ gbmt_log_merged <- gbmt_log %>%
 # Tabla descriptiva
 
 ```{r}
+library(gtsummary)
+```
+
+```{r}
 gbmt_log_descriptive <- gbmt_log %>%
   filter(Clusters == 4) %>% 
   select(country, ISO2, SALID1, YEAR = year, population_imp:group) %>% 
@@ -94,12 +99,8 @@ gbmt_log_descriptive <- gbmt_log %>%
   mutate(
     country = str_to_title(country),
     deaths_per_100k = (deaths / population_imp) * 100000
-  ) %>% 
-  select(-c(ISO2, SALID1, YEAR, deaths)) %>% 
-  relocate(group, .after = deaths_per_100k)
-```
+  )
 
-```{r}
 labelled::var_label(gbmt_log_descriptive) <- list(
   country = "Country",
   population_imp = "Population",
@@ -110,9 +111,11 @@ labelled::var_label(gbmt_log_descriptive) <- list(
 ```
 
 
+
 ```{r}
-library(gtsummary)
-tab1 <- gbmt_log_descriptive %>% 
+tab1_1 <- gbmt_log_descriptive %>% 
+  distinct(country, SALID1, group) %>% 
+  select(country, group) %>% 
   tbl_summary(
     by = group,
     percent = "row"
@@ -121,9 +124,28 @@ tab1 <- gbmt_log_descriptive %>%
   bold_labels() %>% 
   add_overall(last = TRUE)
 
-tab1
+tab1_2 <- gbmt_log_descriptive %>% 
+  select(-c(ISO2, SALID1, YEAR, deaths, country)) %>% 
+  relocate(group, .after = deaths_per_100k) %>% 
+  tbl_summary(
+    by = group,
+    percent = "row"
+  ) %>% 
+  modify_header(label = "") %>%
+  bold_labels() %>% 
+  add_overall(last = TRUE)
 
-tab2 <- gbmt_log_descriptive %>% 
+tab1 <- tbl_stack(
+  list(tab1_1,
+       tab1_2)
+)
+```
+
+
+```{r}
+tab2_1 <- gbmt_log_descriptive %>% 
+  distinct(country, SALID1, group) %>% 
+  select(country, group) %>% 
   tbl_summary(
     by = country,
     percent = "row"
@@ -132,8 +154,22 @@ tab2 <- gbmt_log_descriptive %>%
   bold_labels() %>% 
   add_overall(last = TRUE)
 
-tab2
+tab2_2 <- gbmt_log_descriptive %>% 
+  select(-c(ISO2, SALID1, YEAR, deaths, group)) %>% 
+  tbl_summary(
+    by = country,
+    percent = "row"
+  ) %>% 
+  modify_header(label = "") %>%
+  bold_labels() %>% 
+  add_overall(last = TRUE)
+
+tab2 <- tbl_stack(
+  list(tab2_1,
+       tab2_2)
+)
 ```
+
 
 ```{r}
 #| eval: false
@@ -157,13 +193,14 @@ gbmt_log_merged %>%
     deaths_per_100k = mean(deaths_per_100k)
   ) %>% 
   ungroup() %>% 
+  filter(Clusters == 4) %>% 
   ggplot(aes(x = YEAR, y = deaths_per_100k, color = as.factor(group))) +
   geom_line(aes(group = group)) +
   geom_point() +
   
   labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
        x = "Año", y = "Muertes por 100,000 habitantes", color = "Grupo") +
-  facet_wrap(vars(Clusters)) +
+  # facet_wrap(vars(Clusters)) +
   theme_minimal()
 ```
 
@@ -574,50 +611,110 @@ gbmt_log_merged4 <- gbmt_log_merged4 %>%
   mutate(
     predicted_deaths_100k = predicted_deaths / population_imp * 100000
   )
+
+library(broom.mixed)
+
+gbmt_log_merged4 <- gbmt_log_merged %>% 
+  filter(Clusters == 4) %>% 
+  augment(model_4_binomial_neg, data = ., type.predict = "response")
+
+gbmt_log_merged4 <- gbmt_log_merged4 %>% 
+  mutate(
+    predicted_deaths_100k = .fitted / population_imp * 100000,
+    # Calcula los intervalos de confianza para cada predicción
+    lower_ci = (.fitted - 1.96 * .se.fit) / population_imp * 100000,
+    upper_ci = (.fitted + 1.96 * .se.fit) / population_imp * 100000
+  )
 ```
 
 ### Gráfico
 
 Debido a que se ha agregado a los interceptos de las ciudades como efecto aleatorio, entonces las estimaciones y predicciones van a variar de ciudad a ciudad. Para poder visualizarlo, se podría resumir los datos con su media.
 
+<!-- ```{r} -->
+<!-- #| dpi: 300 -->
+<!-- #| fig-width: 7 -->
+<!-- #| fig-height: 4.5 -->
+
+<!-- plot_binomialoffset <- gbmt_log_merged4 %>%  -->
+<!--   group_by(Clusters, group, YEAR) %>%  -->
+<!--   summarise( -->
+<!--     across( -->
+<!--       c(predicted_deaths_100k,  -->
+<!--         deaths_per_100k), -->
+<!--       mean -->
+<!--     ) -->
+<!--   ) %>%  -->
+<!--   ungroup() %>%  -->
+<!--   ggplot(aes(x = YEAR,  -->
+<!--            y = predicted_deaths_100k, -->
+<!--            color = group)) +  -->
+<!--   geom_point(aes(y = deaths_per_100k), alpha = 0.5, -->
+<!--              position = position_jitter(h = 0.2)) +  # Datos observados -->
+<!--   geom_line(linewidth = 1) + -->
+<!--   labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo", -->
+<!--        x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") + -->
+<!--   facet_wrap(vars(Clusters)) + -->
+<!--   innovar::scale_color_innova("jama") + -->
+<!--   theme_minimal() -->
+
+<!-- plot_binomialoffset -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- #| eval: false -->
+
+<!-- ggsave( -->
+<!--   plot_binomialoffset, -->
+<!--   filename = "02_output/plots/promedio_muertes_group_binomial.png", -->
+<!--   dpi = 300, -->
+<!--   bg = "white", -->
+<!--   width = 7, -->
+<!--   height = 4.5 -->
+<!-- ) -->
+<!-- ``` -->
+
+
+
 ```{r}
 #| dpi: 300
 #| fig-width: 7
 #| fig-height: 4.5
 
-plot_binomialoffset <- gbmt_log_merged4 %>% 
-  group_by(Clusters, group, YEAR) %>% 
+plot_binomialoffset4 <- gbmt_log_merged4 %>% 
+  group_by(group, YEAR) %>% 
   summarise(
-    across(
-      c(predicted_deaths_100k, 
-        deaths_per_100k),
-      mean
-    )
+    predicted_deaths_100k_mean = mean(predicted_deaths_100k),
+    deaths_per_100k_mean = mean(deaths_per_100k),
+    lower_ci_mean = mean(lower_ci),  # No es metodológicamente correcto
+    upper_ci_mean = mean(upper_ci)   # No es metodológicamente correcto
   ) %>% 
   ungroup() %>% 
   ggplot(aes(x = YEAR, 
-           y = predicted_deaths_100k,
+           y = predicted_deaths_100k_mean,
            color = group)) + 
-  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+  geom_point(aes(y = predicted_deaths_100k_mean), alpha = 0.5,
              position = position_jitter(h = 0.2)) +  # Datos observados
-  geom_line() +
-  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo",
-       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
-  facet_wrap(vars(Clusters)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower_ci_mean, ymax = upper_ci_mean, fill = group), alpha = 0.2) + 
+  labs(title = "Average Deaths per 100,000 inhabitants by Cluster",
+       x = NULL, y = NULL, color = "Cluster", fill = "Cluster") +
+  innovar::scale_color_innova("jama") +
+  innovar::scale_fill_innova("jama") +
   theme_minimal()
 
-plot_binomialoffset
+plot_binomialoffset4
 ```
 
 ```{r}
 #| eval: false
 
 ggsave(
-  plot_binomialoffset,
-  filename = "02_output/plots/promedio_muertes_group_binomial.png",
+  plot_binomialoffset4,
+  filename = "02_output/plots/promedio_muertes_group_binomial4.png",
   dpi = 300,
   bg = "white",
-  width = 7,
+  width = 6,
   height = 4.5
 )
 ```
@@ -756,6 +853,51 @@ plot_binomial2offset
 ggsave(
   plot_binomial2offset,
   filename = "02_output/plots/promedio_muertes_group_binomial2.png",
+  dpi = 300,
+  bg = "white",
+  width = 7,
+  height = 4.5
+)
+```
+
+
+
+```{r}
+#| dpi: 300
+#| fig-width: 7
+#| fig-height: 4.5
+
+plot_binomial2offset4 <- gbmt_log_merged5 %>% 
+  filter(Clusters == 4) %>% 
+  group_by(Clusters, group, YEAR) %>%
+  summarise(
+    across(
+      c(predicted_deaths_100k,
+        deaths_per_100k),
+      mean
+    )
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(x = YEAR, 
+           y = predicted_deaths_100k,
+           color = group)) + 
+  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
+             position = position_jitter(h = 0.2)) +  # Datos observados
+  geom_line(linewidth = 1) +
+  innovar::scale_color_innova("jama") +
+  labs(title = "Promedio de Muertes por 100,000 habitantes por Grupo a lo largo del Tiempo",
+       x = "Año", y = "Muertes esperadas por 100,000 habitantes", color = "Grupo") +
+  theme_minimal()
+
+plot_binomial2offset4
+```
+
+```{r}
+#| eval: false
+
+ggsave(
+  plot_binomial2offset4,
+  filename = "02_output/plots/promedio_muertes_group_binomial2_4.png",
   dpi = 300,
   bg = "white",
   width = 7,
@@ -947,7 +1089,7 @@ level1_data <- map(shp_list, 2) %>%
   left_join(countries_by_study)
 ```
 
-
+## Biclass plot
 
 ```{r}
 #| fig-dpi: 600
@@ -959,11 +1101,6 @@ city_data_deaths_biscale <- bi_class(city_data_deaths,
   y = group,
   style = "quantile", dim = 4
 )
-
-city_data_deaths %>% 
- mutate(a = ntile(mean_deaths_per_100k, 4)) %>% 
- group_by(group, a) %>% 
- summarise(min = min(mean_deaths_per_100k), max = max(mean_deaths_per_100k))
 
 custom_pal <- c(
   "1-1" = "#e6ccf5",  # Morado muy claro
@@ -983,7 +1120,6 @@ custom_pal <- c(
   "3-4" = "#c7322c",  # Rojo oscuro
   "4-4" = "#8b1b15"   # Burdeos muy oscuro
 )
-
 
 
 
@@ -1077,6 +1213,162 @@ ggsave("ggmap2.png",
        dpi = 600)
 ```
 
+## Gráfico de barras de distribución
 
+```{r}
+city_data_deaths_biscale %>% 
+  separate_wider_delim(
+    cols = bi_class,
+    delim = "-",
+    names = c("X", "Y")
+  ) %>%
+  count(X, Y) %>% 
+  mutate(
+    n = n/sum(n),
+    .by = X
+  ) %>% 
+  mutate(
+    X = paste0("Cluster ", X)
+  ) %>% 
+  ggplot() +
+  geom_col(
+    aes(
+      y = Y,
+      x = n,
+      fill = Y
+    ),
+    show.legend = FALSE
+  ) +
+  innovar::scale_fill_innova("jama") +
+  scale_x_continuous(labels = scales::percent_format()) +
+  geom_label(
+    aes(
+      y = Y,
+      x = n,
+      label = scales::percent(n, accuracy = 0.1)
+    )
+  ) +
+  facet_wrap(vars(X)) +
+  labs(
+    y = "Cuartil de Mortalidad"
+  ) +
+  theme_minimal()
+  
+
+ggsave("02_output/plots/Distribución mortalidad y cluster.png",
+       dpi = 300,
+       bg = "white",
+       height = 5,
+       width = 8)
+```
+
+## Cluster por colores
+
+<!-- jama -->
+<!-- mlobo -->
+<!-- btran -->
+<!-- nasa -->
+<!-- mortality -->
+
+```{r}
+ggmap2 <- level1_data %>%
+  ggplot() +
+  geom_sf(
+    aes(fill = study),
+    linewidth = 0.05
+  ) +
+  scale_fill_manual(
+    values = c("#bdbdbd", "#e5e5e5"),
+    guide = "none"
+  ) + 
+  geom_sf(
+    data = country_data,
+    linewidth = 0.35, 
+    color = "#3f3f3f",
+    fill = NA
+  ) +
+  geom_sf(
+    data = city_data_deaths,
+    mapping = aes(size = mean_deaths_per_100k,
+                  color = group),
+    alpha = 0.75
+    #color = "white", 
+    # size = 2.5,
+    # show.legend = FALSE
+  ) +
+  innovar::scale_color_innova("jama") +
+  labs(
+    color = "Clusters",
+    size = "Mortality per \n100K inhabitants"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+#| eval: false
+
+ggsave("ggmap8.png",
+       device = grDevices::png,
+       ggmap2,
+       height = 7,
+       width = 10,
+       dpi = 600,
+       bg = "white")
+```
+
+```{r}
+gg_stacked_bar <- function(datos) {
+  datos %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = percent)) +
+    geom_col(aes(fill = group)) +
+    innovar::scale_fill_innova("jama") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    geom_label(
+      aes(
+        group = group,
+        label = scales::percent(percent, accuracy = 1)
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    scale_y_continuous(
+      labels = scales::percent_format()
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1))
+}
+
+stacked_bar <- gbmt_log_4 %>% 
+  gg_stacked_bar()
+```
+
+```{r}
+library(patchwork)
+
+map_stacked <- ggmap2 + stacked_bar
+```
+
+```{r}
+#| eval: false
+
+ggsave("map_stacked.png",
+       device = grDevices::png,
+       map_stacked,
+       height = 7,
+       width = 15,
+       dpi = 600,
+       bg = "white")
+```
 
 
