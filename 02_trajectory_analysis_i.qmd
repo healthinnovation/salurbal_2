@@ -5,20 +5,18 @@ author:
     email: brian.pena@upch.pe
     affiliation: Innovar, UPCH
 date: "`r Sys.Date()`"
-output: 
-  html_document: 
-    toc: yes
-    toc_depth: 3
-    toc_float: yes
-    number_sections: yes
-    code_folding: show
-    code_download: yes
-    theme: 
-      bootswatch: flatly
-    highlight: kate
-    highlight_downlit: true
-editor_options: 
-  chunk_output_type: console
+format: 
+  html:
+    toc: true
+    number-sections: true
+    anchor-sections: true
+    code-line-numbers: true
+    code-overflow: scroll
+    code-copy: hover
+    code-link: true
+    code-fold: show
+    lang: es
+    embed-resources: true
 ---
 
 ```{r setup, include=FALSE}
@@ -329,4 +327,3 @@ La estructura en este punto estaría quedando así:
 #   OCC <dbl>, smallest_group <dbl>, city_info <list>,
 #   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list>
 # ℹ Use `print(n = ...)` to see more rows -->
-
