@@ -17,18 +17,11 @@ format:
     code-fold: show
     lang: es
     embed-resources: true
+    fig-align: center
+    fig-dpi: 300
+execute: 
+  echo: true
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  echo = TRUE,
-  dpi = 300,
-  fig.align = 'center'
-  # message = FALSE,
-  # warning = FALSE,
-  # error = TRUE
-)
-```
 
 # Load packages
 
@@ -46,11 +39,7 @@ pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal1ux.rds")
 
 # Formateo de datos
 
-Se crearán 3 objetos: 
-
-- `pop_bectu_gbmt_df`: Contiene a las coincidencias completas de datos poblacionales y crecimiento poblacional en las ciudades.
-- `pop_gbmt_df`: Contiene solo a los valores imputados completos de las poblaciones en ciudades.
-- `bectu_gbmt_df`: Contiene solo a los valores imputados completos de los crecimientos poblacionales en ciudades.
+Se crea el objeto `pop_bectu_gbmt_df` que contiene a las coincidencias completas de datos poblacionales y crecimiento poblacional en las ciudades.
 
 ```{r}
 pop_bectu_gbmt_df <- pop_bectuareal %>%
@@ -59,20 +48,12 @@ pop_bectu_gbmt_df <- pop_bectuareal %>%
     population_imp, bectuareal1ux_imp
   ) %>%
   drop_na()
-
-pop_gbmt_df <- pop_bectuareal %>%
-  select(pubsalid1, year, population_imp) %>%
-  drop_na(population_imp)
-
-bectu_gbmt_df <- pop_bectuareal %>%
-  select(pubsalid1, year, bectuareal1ux_imp) %>%
-  drop_na(bectuareal1ux_imp) 
 ```
-
 
 # Estimación
 
 Configuración de uso multinúcleo para el análisis:
+
 ```{r}
 cluster <- new_cluster(parallel::detectCores())
 cluster_library(cluster, c("dplyr", "purrr", "gbmt"))
@@ -80,23 +61,19 @@ gbmt_safe <- safely(.f = gbmt)
 cluster_copy(cluster, "gbmt_safe")
 ```
 
-Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conjuntos de datos para analizar en cada fila. 
+Se crea una *pseudo-matriz* que contiene los parámetros de análisis y los conjuntos de datos para analizar en cada fila.
 
 ```{r}
 gbmt_matrix <- expand_grid(
   d = 2,
   ng = 1:10,
-  scale = c(2, 4),
+  scale = 4,
   tibble(
     data_gbmt = list(
-      pop_bectu_gbmt_df,
-      pop_gbmt_df,
-      bectu_gbmt_df
+      pop_bectu_gbmt_df
     ),
     x_names = list(
-      c("population_imp", "bectuareal1ux_imp"),
-      c("population_imp"),
-      c("bectuareal1ux_imp")
+      c("population_imp", "bectuareal1ux_imp")
     )
   )  
 ) 
@@ -139,7 +116,6 @@ saveRDS(gbmt_collect,
 #gbmt_collect <- readRDS("01_data/processed/gbmt_collect_pop_bectu.rds")
 ```
 
-
 ```{r}
 gbmt_collect_errors <- gbmt_collect %>% 
   filter(map_lgl(.$gbmt_out, ~ !is.null(.x$error)))
@@ -148,7 +124,6 @@ gbmt_collect_clean <- gbmt_collect %>%
   filter(map_lgl(.$gbmt_out, ~ is.null(.x$error))) %>% 
   mutate(gbmt_out = map(gbmt_out, 'result'))
 ```
-
 
 # Índices de validación
 
@@ -173,7 +148,6 @@ gbmt_fit_total <- gbmt_collect_clean %>%
     ),
     scale_name = case_match(
       scale,
-      2 ~ "standardization",
       4 ~ "logarithmic"
     ),
     city_info = list(city_info)
@@ -182,7 +156,7 @@ gbmt_fit_total <- gbmt_collect_clean %>%
   arrange(ng, d, scale)
 ```
 
-Exportar la información sobre los índices de ajuste: 
+Exportar la información sobre los índices de ajuste:
 
 ```{r}
 fs::dir_create("02_output/tables/")
@@ -238,7 +212,6 @@ saveRDS(
 ```
 
 # Re-ingreso de información
-
 
 ```{r}
 gbmt_fit_total <- gbmt_fit_total %>%
@@ -305,9 +278,9 @@ saveRDS(gbmt_fit_final,
 #gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
 ```
 
-
 La estructura en este punto estaría quedando así:
 
+```{=html}
 <!-- r$> gbmt_fit_final
 # A tibble: 55 × 19
        d    ng scale scale_name      data_gbmt x_names gbmt_out     AIC     BIC
@@ -327,3 +300,4 @@ La estructura en este punto estaría quedando así:
 #   OCC <dbl>, smallest_group <dbl>, city_info <list>,
 #   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list>
 # ℹ Use `print(n = ...)` to see more rows -->
+```
