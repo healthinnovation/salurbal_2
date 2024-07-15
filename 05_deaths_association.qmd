@@ -49,44 +49,36 @@ gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
 deaths_by_year <- read_csv(file = "01_data/processed/deaths_by_year.csv")
 ```
 
-# Formato de datos
+# Unificar datos
 
 ```{r}
-gbmt_log_3 <- gbmt_fit_final %>% 
-  filter(scale_name == "logarithmic", ng == 3) %>% 
-  slice(1)
+gbmt_log <- gbmt_fit_final %>% 
+  select(ng, gbmt_fit_total) |> 
+  unnest(gbmt_fit_total)
 
-gbmt_log_3 <- gbmt_log_3$gbmt_fit_total[[1]]
-
-
-gbmt_log_4 <- gbmt_fit_final %>% 
-  filter(scale_name == "logarithmic", ng == 4) %>% 
-  slice(1)
-
-gbmt_log_4 <- gbmt_log_4$gbmt_fit_total[[1]]
-
-
-gbmt_log <- gbmt_log_3 %>% 
-  bind_rows(gbmt_log_4,
-            .id = "Clusters") %>% 
-  mutate(Clusters = case_match(Clusters,
-                               "1" ~ 3,
-                               "2" ~ 4))
-```
-
-
-Unificar datos:
-
-```{r}
-gbmt_log_merged <- gbmt_log %>%
-  select(Clusters, ISO2, pubsalid1, SALID1, YEAR = year, population_imp_norm:group) %>% 
+gbmt_log_merged <- gbmt_log %>% 
+  select(ng, ISO2, pubsalid1, SALID1, 
+         YEAR = year, population_imp_norm:group,
+         country, City) %>% 
   inner_join(
-    deaths_by_year
+    deaths_by_year,
+    by = join_by(ISO2, SALID1, YEAR),
+    relationship = "many-to-many"
   ) %>% 
   mutate(
     deaths_per_100k = (deaths / population_imp) * 100000,
-    population_imp_log = log(population_imp)
+    population_imp_log = log(population_imp),
+    country = str_to_title(country)
   )
+
+labelled::var_label(gbmt_log_merged) <- list(
+  country = "Country",
+  population_imp = "Population",
+  bectuareal1ux_imp = "Urban Area",
+  deaths_per_100k	 = "Deaths per 100K",
+  group = "Clusters",
+  GTHGROUP = "Deaths per 100k"
+)
 ```
 
 # Tabla descriptiva
@@ -96,97 +88,162 @@ library(gtsummary)
 ```
 
 ```{r}
-gbmt_log_descriptive <- gbmt_log %>%
-  filter(Clusters == 4) %>% 
-  select(country, ISO2, SALID1, YEAR = year, population_imp:group) %>% 
-  inner_join(
-    deaths_by_year
-  ) %>% 
+table1_descriptive <- function(data) {  
+  if (length(unique(data$group)) == 10) {
+    data <- data %>% 
+      mutate(
+        group = fct_relevel(group, "10",
+                            after = Inf)
+      )
+  }
+
+  tab1 <- data %>% 
+    filter(Tier == "Overall") %>% 
+    select(country, group) %>% 
+    tbl_summary(
+      by = group,
+      percent = "row"
+    ) %>% 
+    modify_header(label = "") %>%
+    bold_labels()
+
+  tab2 <- data %>% 
+    filter(Tier == "Overall") %>% 
+    select(group, population_imp, bectuareal1ux_imp) %>% 
+    tbl_summary(
+      by = group,
+      percent = "row"
+    ) %>% 
+    modify_header(label = "") %>%
+    bold_labels() 
+
+  data_tab3 <- data %>% 
+    filter(Tier %in% c("Overall", "T1")) %>% 
+    mutate(GTHGROUP = fct_relevel(GTHGROUP, "Overall"))
+
+  tab_3_1 <- data_tab3 %>% 
+    select(group, GTHGROUP) %>% 
+    tbl_summary(
+      by = group,
+      percent = "row"
+    ) %>% 
+    bold_labels()
+
+  tab_3_2 <- data_tab3 %>% 
+    select(group, GTHGROUP, deaths_per_100k) %>% 
+    tbl_strata(
+      strata = group,
+      .tbl_fun = 
+        ~ .x %>% 
+        tbl_summary(
+          by = GTHGROUP,
+          percent = "row"
+        ) 
+    ) 
+
+  tab_3_2_mod <- tab_3_2$table_body %>%
+    pivot_longer(
+      cols = starts_with("stat_"),
+      names_to = c("stat_type", "group"),
+      names_pattern = "stat_([0-9]+)_([0-9]+)"
+    ) %>% 
+    pivot_wider(
+      names_from = group,
+      values_from = value,
+      names_glue = "stat_{group}"
+    ) %>% 
+    mutate(
+      label = factor(
+        stat_type,
+        labels = c(
+          "Overall",
+          "Communicable, maternal, perinatal and nutritional conditions",
+          "Injuries",
+          "Noncommunicable diseases"
+        )
+      )
+    ) %>% 
+    select(label, all_stat_cols(stat_0 = FALSE))
+
+  tab_3_1$table_body <- tab_3_1$table_body %>% 
+    select(-all_stat_cols(stat_0 = FALSE)) %>% 
+    left_join(
+      tab_3_2_mod,
+      by = join_by(label)
+    )
+    
+  if (length(unique(data$group)) != 1) {
+    tab1 <- tab1 %>% 
+      add_overall(last = TRUE)
+    tab2 <- tab2 %>% 
+      add_overall(last = TRUE)
+
+    tab_3_3 <- data_tab3 %>% 
+      select(GTHGROUP, deaths_per_100k) %>% 
+      tbl_summary(
+        by = GTHGROUP
+      ) 
+
+    tab_3_3_mod <- tab_3_3$table_body %>% 
+      pivot_longer(
+        cols = starts_with("stat_"),
+        names_to = c("group"),
+        names_pattern = "stat_([0-9]+)"
+      ) %>% 
+      mutate(
+        label = factor(
+          group,
+          labels = c(
+            "Overall",
+            "Communicable, maternal, perinatal and nutritional conditions",
+            "Injuries",
+            "Noncommunicable diseases"
+          )
+        )
+      ) %>% 
+      select(label, stat_0 = value)
+
+    tab_3_1$table_body <- tab_3_1$table_body %>% 
+      left_join(
+        tab_3_3_mod,
+        by = join_by(label)
+      )
+
+    tab_3_1$table_styling$header <- tab_3_1$table_styling$header %>% 
+      bind_rows(
+        tab_3_3$table_styling$header %>% 
+          filter(modify_stat_level == "Overall") %>% 
+          mutate(column = "stat_0")
+      )
+  }
+
+  tbl_stack(
+    list(tab1,
+         tab2,
+         tab_3_1),
+    quiet = TRUE
+  )
+}
+```
+
+```{r}
+gbmt_log_tab1 <- gbmt_log_merged %>% 
+  group_nest(ng) %>%
   mutate(
-    country = str_to_title(country),
-    deaths_per_100k = (deaths / population_imp) * 100000
+    tab1 = map(
+      data,
+      table1_descriptive
+    )
   )
 
-labelled::var_label(gbmt_log_descriptive) <- list(
-  country = "Country",
-  population_imp = "Population",
-  bectuareal1ux_imp = "Urban Area",
-  deaths_per_100k	 = "Deaths per 100K",
-  group = "Clusters"
+walk2(
+  gbmt_log_tab1$tab1,
+  gbmt_log_tab1$ng,
+  ~ .x %>% 
+    as_flex_table() %>%
+    flextable::save_as_docx(path = paste0("./02_output/tables/descriptive1",
+                                          "_group_", .y, ".docx"))
 )
-```
-
-
-
-```{r}
-tab1_1 <- gbmt_log_descriptive %>% 
-  distinct(country, SALID1, group) %>% 
-  select(country, group) %>% 
-  tbl_summary(
-    by = group,
-    percent = "row"
-  ) %>% 
-  modify_header(label = "") %>%
-  bold_labels() %>% 
-  add_overall(last = TRUE)
-
-tab1_2 <- gbmt_log_descriptive %>% 
-  select(-c(ISO2, SALID1, YEAR, deaths, country)) %>% 
-  relocate(group, .after = deaths_per_100k) %>% 
-  tbl_summary(
-    by = group,
-    percent = "row"
-  ) %>% 
-  modify_header(label = "") %>%
-  bold_labels() %>% 
-  add_overall(last = TRUE)
-
-tab1 <- tbl_stack(
-  list(tab1_1,
-       tab1_2)
-)
-```
-
-
-```{r}
-tab2_1 <- gbmt_log_descriptive %>% 
-  distinct(country, SALID1, group) %>% 
-  select(country, group) %>% 
-  tbl_summary(
-    by = country,
-    percent = "row"
-  ) %>% 
-  modify_header(label = "") %>%
-  bold_labels() %>% 
-  add_overall(last = TRUE)
-
-tab2_2 <- gbmt_log_descriptive %>% 
-  select(-c(ISO2, SALID1, YEAR, deaths, group)) %>% 
-  tbl_summary(
-    by = country,
-    percent = "row"
-  ) %>% 
-  modify_header(label = "") %>%
-  bold_labels() %>% 
-  add_overall(last = TRUE)
-
-tab2 <- tbl_stack(
-  list(tab2_1,
-       tab2_2)
-)
-```
-
-
-```{r}
-#| eval: false
-
-tab1 %>%
-  as_flex_table() %>%
-  flextable::save_as_docx(path = "./02_output/tables/descriptive1.docx")
-
-tab2 %>%
-  as_flex_table() %>%
-  flextable::save_as_docx(path = "./02_output/tables/descriptive2.docx")
 ```
 
 
