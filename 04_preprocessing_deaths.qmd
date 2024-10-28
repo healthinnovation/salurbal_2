@@ -28,29 +28,137 @@ library(tidyverse)
 
 ```{r}
 # Ruta al directorio donde se encuentran los archivos
-path_dir <- "01_data/raw/Data Request MS242_02142023/"
+path_dir1 <- "01_data/raw/Requested data for MS242/"
 
-# Leer los archivos .csv que contienen "DTHRED" en su nombre
-death_df <- purrr::map_df(
-  .x = list.files(
-    path = path_dir,
-    pattern = "DTHRED.*\\.csv$",
-    full.names = TRUE  # Esto asegura que se devuelva la ruta completa al archivo
+death_t1 <- purrr::map_df(
+  .x = c(
+    list.files(
+      path = path_dir1,
+      pattern = "DTHRED1.*\\.csv$",
+      full.names = TRUE
     ),
+    "01_data/raw/Data Request MS242_06072024/DTHRED1PE_L1AD_20240521.csv"
+  ),
   .f = readr::read_csv
 )
+
+death_t2 <- purrr::map_df(
+  .x = c(
+    list.files(
+      path = path_dir1,
+      pattern = "DTHRED2.*\\.csv$",
+      full.names = TRUE
+    ),
+    "01_data/raw/Data Request MS242_06072024/DTHRED2PE_L1AD_20240521.csv"
+  ),
+  .f = readr::read_csv
+)
+
+death_t3 <- purrr::map_df(
+  .x = c(
+    list.files(
+      path = path_dir1,
+      pattern = "DTHRED3.*\\.csv$",
+      full.names = TRUE
+    ),
+    "01_data/raw/Data Request MS242_06072024/DTHRED3PE_L1AD_20240521.csv"
+  ),
+  .f = readr::read_csv
+)
+```
+
+```{r}
+ghe_t1 <- read_csv("01_data/raw/ghe_codes_tier1.csv")
+ghe_t2 <- read_csv("01_data/raw/ghe_codes_tier2.csv")
+ghe_t3 <- read_csv("01_data/raw/ghe_codes_tier3.csv")
+```
+
+```{r}
+ghe <- bind_rows(
+  ghe_t1,
+  ghe_t2,
+  ghe_t3
+) %>% 
+  select(DTHCOD_FINAL = group,
+         GTHGROUP = name) %>% 
+  distinct() %>% 
+  add_case(
+    DTHCOD_FINAL = "0000",
+    GTHGROUP = "Overall"
+  ) %>% 
+  drop_na()
 ```
 
 # Resumen de datos por años
 
 ```{r}
-deaths_by_year <- death_df %>% 
-  group_by(ISO2, SALID1, YEAR) %>% 
-  summarise(
-    deaths = sum(DTHRED3DEATHS, na.rm = TRUE)
-  ) %>% 
-  ungroup()
+death_t1 %>% 
+  arrow::arrow_table()
 ```
+
+
+```{r}
+deaths <- death_t1 %>% 
+  select(ISO2, SALID1, YEAR,
+         DTHCOD_FINAL = DTHCOD_FINAL1,
+         deaths = DTHRED1DEATHS) %>% 
+  bind_rows(
+    death_t2 %>% 
+      select(ISO2, SALID1, YEAR,
+             DTHCOD_FINAL = DTHCOD_FINAL2,
+             deaths = DTHRED2DEATHS),
+    death_t3 %>% 
+      select(ISO2, SALID1, YEAR,
+             DTHCOD_FINAL = DTHCOD_FINAL3,
+             deaths = DTHRED3DEATHS),
+    death_t1 %>% 
+      summarise(
+        deaths = sum(DTHRED1DEATHS, na.rm = TRUE),
+        .by = c(ISO2, SALID1, YEAR)
+      ) %>% 
+      mutate(DTHCOD_FINAL = 0),
+    .id = "Tier"
+  )
+
+
+deaths <- deaths %>% 
+  mutate(
+    Tier = factor(Tier,
+                  labels = c("T1", "T2",
+                             "T3", "Overall")),
+    DTHCOD_FINAL = str_pad(DTHCOD_FINAL,
+                           pad = "0",
+                           width = 4)
+  )
+
+deaths_ghe <- deaths %>% 
+  left_join(ghe,
+            by = join_by(DTHCOD_FINAL))
+```
+
+```{r}
+#| eval: false
+arrow::write_parquet(
+  deaths_ghe,
+  "01_data/processed/deaths_ghe.parquet"
+)
+
+arrow::write_ipc_stream(
+  deaths_ghe,
+  "01_data/processed/deaths_ghe.arrow"
+)
+```
+
+```{r}
+deaths_by_year <- deaths_ghe %>% 
+  summarise(
+    deaths = sum(deaths),
+    .by = c(Tier, ISO2, SALID1, 
+            YEAR, DTHCOD_FINAL,
+            GTHGROUP)
+  )
+```
+
 
 # Exportar datos
 
