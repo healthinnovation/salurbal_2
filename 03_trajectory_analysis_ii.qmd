@@ -1,0 +1,811 @@
+---
+title: "Trajectory Analysis - II"
+author:
+  - name: Brian Peña-Calero
+    email: brian.pena@upch.pe
+    affiliation: Innovar, UPCH
+date: "`r Sys.Date()`"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    anchor-sections: true
+    code-line-numbers: true
+    code-overflow: scroll
+    code-copy: hover
+    code-link: true
+    code-fold: show
+    lang: es
+    embed-resources: true
+    fig-align: center
+    fig-dpi: 300
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load packages
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(sf)
+library(gbmt)
+```
+
+# Import data
+
+```{r}
+gbmt_fit_final <- readRDS("01_data/processed/gbmt_fit_final.rds")
+salid1_pubsalid1 <- readr::read_csv("01_data/raw/SALID1_PUBSALID1.csv")
+gdb_path <- "01_data/raw/Data Request MS242_09222023/MS242_L1.gdb"
+gdb_salurbal <- st_layers(gdb_path)
+
+cities_l1ad <- st_read(
+  gdb_path,
+  gdb_salurbal$name[[1]]
+) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(SALID1, .after = PUBSALID1)
+
+cities_l1ad_noislands <- st_read(
+  gdb_path,
+  gdb_salurbal$name[[2]]
+) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  left_join(
+    salid1_pubsalid1
+  ) %>%
+  relocate(SALID1, .after = PUBSALID1)
+```
+
+# Generación de Gráficos
+
+## Gráficos de barra y líneas
+
+```{r}
+source("https://gist.github.com/r2evans/6057f7995c117bb787495dc14a228d5d/raw/6326ea0ebeea7f42d9b7c99b3e8963d5f3252f3a/coord_cartesian_panels.R")
+```
+
+
+```{r}
+gg_line <- function(datos) {
+  datos_non_stand_tidy <- datos %>% 
+    pivot_longer(
+      cols = c(population_imp, bectuareal1ux_imp),
+      names_to = "pop_bectu_vars",
+      values_to = "pop_bectu_values"
+    ) %>% 
+    mutate(
+      pop_bectu_vars = fct_relevel(pop_bectu_vars,
+                                   "population_imp")
+    )
+  
+  datos_non_stand_tidy %>% 
+    ggplot(
+      aes(
+        x = year,
+        y = pop_bectu_values
+      )
+    ) +
+    geom_smooth(
+      aes(group = group,
+          color = group,
+          fill = group),
+      method = "lm", formula = y ~ I(x^1) + I(x^2),
+      linewidth = 1.5,
+      alpha = 0.2
+    ) +
+    scale_x_continuous(breaks = c(seq(1985, 2015, 5), 2015),
+                       limits = c(1985, 2015)) +
+    labs(x = NULL, y = NULL,
+         color = "Clusters",
+         fill = "Clusters") +
+    scale_y_continuous(
+      labels = scales::label_number()
+    ) +
+    scale_color_brewer(palette = "Set1") +
+    scale_fill_brewer(palette = "Set1") +
+    facet_wrap(vars(pop_bectu_vars),
+               scales = "free",
+               strip.position = "left",
+               labeller = as_labeller(c(
+                 population_imp = "Population", 
+                 bectuareal1ux_imp = "Urban Area"
+               ))) +
+    theme_minimal() +
+    theme(
+      strip.placement = "outside"
+    )
+}
+
+
+gg_line_facet <- function(datos, ggline) {
+  
+  y_range <- ggplot_build(ggline)$layout$panel_params
+  
+  datos_non_stand_tidy <- datos %>% 
+    pivot_longer(
+      cols = c(population_imp, bectuareal1ux_imp),
+      names_to = "pop_bectu_vars",
+      values_to = "pop_bectu_values"
+    ) %>% 
+    mutate(
+      pop_bectu_vars = fct_relevel(pop_bectu_vars,
+                                   "population_imp")
+    )
+  
+  gg_non_stand_1 <- datos_non_stand_tidy %>% 
+    ggplot(
+      aes(
+        x = year,
+        y = pop_bectu_values
+      )
+    ) +
+    geom_line(aes(group = pubsalid1), color = "grey80") +
+    geom_smooth(
+      aes(group = group,
+          color = group,
+          fill = group),
+      method = "lm", formula = y ~ I(x^1) + I(x^2),
+      linewidth = 1.5,
+      alpha = 0.2
+    ) +
+    scale_x_continuous(breaks = c(seq(1985, 2015, 5), 2015),
+                       limits = c(1985, 2015)) +
+    labs(x = NULL, y = NULL,
+         color = "Clusters",
+         fill = "Clusters") +
+    scale_y_continuous(
+      labels = scales::label_number()
+    ) +
+    scale_color_brewer(palette = "Set1") +
+    scale_fill_brewer(palette = "Set1") +
+    facet_wrap(vars(pop_bectu_vars),
+               scales = "free",
+               strip.position = "left",
+               labeller = as_labeller(c(
+                 population_imp = "Population", 
+                 bectuareal1ux_imp = "Urban Area"
+               ))) +
+    theme_minimal() +
+    theme(
+      strip.placement = "outside"
+    )
+
+  gg_non_stand_2 <- gg_non_stand_1 +
+    coord_cartesian_panels(
+        panel_limits = tibble::tribble(
+          ~pop_bectu_vars,     ~ymin,                   ~ymax,
+          "population_imp",     y_range[[1]]$y.range[1], y_range[[1]]$y.range[2],
+          "bectuareal1ux_imp",  0,      y_range[[2]]$y.range[2]
+        )
+    )
+  
+  datos_stand_tidy <- datos %>% 
+    pivot_longer(
+      cols = c(population_imp_norm, 
+               bectuareal1ux_imp_norm),
+      names_to = "pop_bectu_vars",
+      values_to = "pop_bectu_values"
+    ) %>% 
+    mutate(
+      pop_bectu_vars = fct_relevel(pop_bectu_vars,
+                                   "population_imp_norm")
+    )
+  
+  gg_stand_base <- datos_stand_tidy %>% 
+    ggplot(
+      aes(
+        x = year,
+        y = pop_bectu_values
+      )
+    ) +
+    scale_x_continuous(breaks = c(seq(1985, 2015, 5), 2015),
+                       limits = c(1985, 2015)) +
+    labs(x = NULL, y = NULL,
+         color = "Clusters",
+         fill = "Clusters") +
+    scale_color_brewer(palette = "Set1") +
+    scale_fill_brewer(palette = "Set1") +
+    facet_wrap(vars(pop_bectu_vars),
+               scales = "free",
+               strip.position = "left",
+               labeller = as_labeller(c(
+                 population_imp_norm = "Standardized Population", 
+                 bectuareal1ux_imp_norm = "Standardized  Urban Area"
+               ))) +
+    theme_minimal() +
+    theme(
+      strip.placement = "outside"
+    )
+  
+  gg_stand_1 <- gg_stand_base +
+    geom_smooth(
+      aes(group = group,
+          color = group,
+          fill = group),
+      method = "lm", formula = y ~ I(x^1) + I(x^2),
+      linewidth = 1.5,
+      alpha = 0.2
+    ) 
+  
+  gg_stand_2 <- gg_stand_base +
+    geom_line(aes(group = pubsalid1), color = "grey80") +
+    geom_smooth(
+      aes(group = group,
+          color = group,
+          fill = group),
+      method = "lm", formula = y ~ I(x^1) + I(x^2),
+      linewidth = 1.5,
+      alpha = 0.2
+    ) 
+  
+  (gg_non_stand_1 + gg_non_stand_2) / 
+    (gg_stand_1 + gg_stand_2) +
+    plot_layout(
+      guides = "collect"
+    ) +
+    plot_annotation(
+      title = "Population and Urban Area trends by cluster"
+    )
+    
+}
+
+
+gg_stacked_bar <- function(datos) {
+  datos %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = percent)) +
+    geom_col(aes(fill = group),
+             alpha = 0.85) +
+    scale_fill_brewer(palette = "Set1") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    geom_label(
+      aes(
+        group = group,
+        label = scales::percent(percent, accuracy = 1)
+      ),
+      position = position_stack(vjust = 0.5)
+    ) +
+    scale_y_continuous(
+      labels = scales::percent_format()
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1))
+}
+
+gg_bar <- function(datos, year_filter = 2015) {
+  datos %>%
+    filter(year == year_filter) %>%
+    count(country, group) %>%
+    group_by(country) %>%
+    mutate(
+      percent = n / sum(n),
+      country = str_to_title(country)
+    ) %>%
+    ungroup() %>%
+    ggplot(aes(x = country, y = n)) +
+    geom_col(aes(fill = group), alpha = 0.85) +
+    scale_fill_brewer(palette = "Set1") +
+    labs(
+      fill = "Cluster",
+      y = NULL,
+      x = NULL
+    ) +
+    ggrepel::geom_label_repel(
+      aes(
+        group = group,
+        label = n
+      ),
+      direction = "y",
+      position = position_stack(vjust = 0.5),
+      force = 0.001,
+      force_pull = 1,
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1))
+}
+```
+
+Generación de los gráficos de línea estandarizados, sin estandarizar, stacked bar y barras (frecuencia).
+
+```{r}
+gbmt_fit_final$gbmt_fit_total[[10]] <- gbmt_fit_final$gbmt_fit_total[[10]] %>% 
+  mutate(
+    group = fct_relevel(group, "10", 
+                        after = 9)
+  ) 
+
+gbmt_fit_plots <- gbmt_fit_final %>%
+  mutate(
+    line_plot = map(
+      gbmt_fit_total,
+      gg_line
+    ),
+    line_facet = map2(
+      gbmt_fit_total,
+      line_plot,
+      ~ gg_line_facet(.x, .y)
+    ),
+    stacked_bar_plot = map(
+      gbmt_fit_total,
+      gg_stacked_bar
+    ),
+    bar_plot = map(
+      gbmt_fit_total,
+      gg_bar
+    )
+  )
+```
+
+Finalmente guardamos los gráficos generados:
+
+```{r}
+# Función para guardar una lista de gráficos
+save_plots <- function(plots, prefix, x_names, cluster, scale_name = NULL, 
+                       width = 7, height = 7) {
+  walk2(plots, seq_along(plots), function(plot, i) {
+    # Crear el nombre base con las variables
+    var_names <- str_replace_all(x_names[[i]], "_imp", "")
+    var_string <- str_c(var_names, collapse = "-")
+
+    # Crear el nombre del archivo usando el número de cluster
+    filename <- paste0(prefix, "-", cluster[[i]], "-", var_string)
+
+    if (!is.null(scale_name[[i]])) {
+      filename <- paste0(filename, "-", scale_name[[i]])
+    }
+
+    filename <- paste0(filename, ".png")
+
+    ggsave(
+      filename,
+      plot,
+      width = width,
+      height = height,
+      dpi = 300,
+      bg = "white"
+    )
+  })
+}
+
+fs::dir_create("02_output/plots/line_facet/")
+fs::dir_create("02_output/plots/line_non-std/")
+fs::dir_create("02_output/plots/stacked_bar_plots/")
+fs::dir_create("02_output/plots/bar_plots/")
+
+# Aplicar la función a cada una de las últimas cuatro columnas
+save_plots(
+  gbmt_fit_plots$line_facet, 
+  "02_output/plots/line_facet/lineplot",
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng, 
+  gbmt_fit_final$scale_name, 
+  width = 12.5,
+  height = 5
+)
+
+save_plots(
+  gbmt_fit_plots$line_plot, 
+  "02_output/plots/line_non-std/lineplot", 
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng, 
+  gbmt_fit_final$scale_name
+)
+
+save_plots(
+  gbmt_fit_plots$stacked_bar_plot,
+   "02_output/plots/stacked_bar_plots/stackedbarplot", 
+   gbmt_fit_final$x_names, 
+   gbmt_fit_final$ng,
+   gbmt_fit_final$scale_name
+)
+
+save_plots(
+  gbmt_fit_plots$bar_plot,
+  "02_output/plots/bar_plots/barplot",
+  gbmt_fit_final$x_names, 
+  gbmt_fit_final$ng,
+  gbmt_fit_final$scale_name
+)
+```
+
+
+
+```{r}
+gbmt_log_4 <- gbmt_fit_final %>% 
+  filter(scale_name == "logarithmic", ng == 4) %>% 
+  slice(1)
+
+gbmt_log_4 <- gbmt_log_4$gbmt_fit_total[[1]]
+
+cluster4_line_g_pob <- gbmt_log_4 %>% 
+  ggplot(
+    aes(
+      x = year, 
+      y = population_imp
+    )
+  ) +
+  geom_line(aes(group = pubsalid1), color = "grey80") +
+  geom_smooth(
+    aes(group = group,
+        color = group),
+    method = "lm", formula = y ~ I(x^1) + I(x^2)
+  ) +
+  scale_x_continuous(breaks = c(seq(1985, 2015, 5), 2015),
+                     limits = c(1985, 2015)) +
+  labs(x = NULL, y = "Population",
+       color = "Clusters") +
+  scale_y_continuous(
+        labels = scales::label_number()
+  ) +
+  innovar::scale_color_innova("mortality") +
+  # facet_wrap(vars(group)) +
+  theme_classic()
+
+cluster4_line_g_pob_zoom <- gbmt_log_4 %>% 
+  ggplot(
+    aes(
+      x = year, 
+      y = population_imp
+    )
+  ) +
+  geom_smooth(
+    aes(group = group,
+        color = group),
+    method = "lm", formula = y ~ I(x^1) + I(x^2),
+    show.legend = FALSE
+  ) +
+  coord_cartesian(xlim = c(1985, 1995), 
+                  ylim = c(100000, 700000)) + 
+  labs(x = NULL, 
+       y = NULL) +
+  scale_y_continuous(
+    labels = scales::label_number()
+  ) +
+  scale_x_continuous(
+    breaks = seq(1985, 1995, 5)
+  ) +
+  innovar::scale_color_innova("mortality") +
+  # facet_wrap(vars(group)) +
+  theme_classic()
+```
+
+```{r}
+library(grid)
+
+
+# Luego, convierte el segundo gráfico en un grob (objeto gráfico)
+g2_grob <- ggplotGrob(cluster4_line_g_pob_zoom)
+
+# Ahora, añade g2 como una anotación personalizada en g1
+cluster4_line_g_pob +
+  annotation_custom(grob = g2_grob, xmin = 1990, xmax = 2005, ymin = 5500000, ymax = 15000000) +
+  geom_rect(
+    aes(xmin = 1985, xmax = 1995, ymin = 0, ymax = 700000), 
+    color='black',
+    linetype='dashed', 
+    alpha=0
+  ) +
+  annotate(
+    "curve",
+    x = 1986,
+    xend = 1990,
+    y = 700000,
+    yend = 5500000,
+    arrow = arrow(length = unit(0.03, "npc"))
+  )
+
+```
+
+
+
+## Generación de mapas
+
+En esta sección se unificarán las geometrías de las ciudades con la información de la columna `City` que ahora mismo viene de los datos poblacionales. Actualmente se está usando geometrías proporcionadas por `geodata::gadm()` sin embargo, no se está teniendo coincidencias adecuadas en las ciudades. **Esto debería modificarse de acuerdo a como tengan las geometrías almacenadas**.  
+
+
+```{r}
+get_shp <- function(ISO2) {
+  # Obtener shp_1
+  shp_0 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 0
+  ) %>%
+    st_as_sf()
+  
+  # Obtener shp_1
+  shp_1 <- geodata::gadm(
+    ISO2,
+    path = "01_data/raw/shp/",
+    level = 1
+  ) %>%
+    st_as_sf()
+
+  # Obtener shp_2 y aplicar las transformaciones
+  shp_2 <- cities_l1ad_noislands %>%
+    filter(COUNTRYAB == ISO2) %>%
+    janitor::clean_names()
+
+  # Devolver la lista con shp_1 y shp_2
+  list(
+    shp_0 = shp_0,
+    shp_1 = shp_1,
+    shp_2 = shp_2
+  )
+}
+
+
+shp_list <- unique(gbmt_fit_final$gbmt_fit_total[[1]]$ISO2) %>%
+  append(
+    c("NI", "GUY", "SUR", "BOL", "PRY",
+      "URY", "ECU", "BLZ", "HND",
+      "TTO", "VEN")
+  ) %>% 
+  set_names() %>%
+  map(get_shp)
+```
+
+
+### Mapa con puntos
+
+
+```{r}
+join_data_shp2 <- function(data, shp_list) {
+  # Proceso de unión con shapefiles
+  data %>%
+    mutate(
+      pubsalid1 = as.numeric(as.character(pubsalid1)),
+      # City = str_to_lower(City),
+      group = factor(group)
+    ) %>%
+    group_nest(ISO2, country) %>%
+    drop_na(ISO2) %>%
+    mutate(
+      country = str_to_title(country),
+      shp_1 = map(ISO2, ~ shp_list[[.x]]$shp_1),
+      shp_2 = map(ISO2, ~ shp_list[[.x]]$shp_2),
+      shp_inner = map2(
+        data,
+        shp_2,
+        ~ inner_join(
+          .x,
+          .y,
+          by = join_by(pubsalid1)
+        ) %>%
+          st_as_sf()
+      )
+    )
+}
+```
+
+```{r}
+gbmt_interest <- gbmt_fit_final %>%
+  filter(
+    scale_name == "logarithmic",
+    ng == 3
+  ) %>%
+  slice(1)
+
+# Calcula el delta año tras año para cada ciudad
+gbmt_interest$gbmt_fit_total[[1]] <- gbmt_interest$gbmt_fit_total[[1]] %>%
+  arrange(pubsalid1, year) %>%
+  group_by(ISO2, country, group, pubsalid1) %>%
+  mutate(
+    perc_population_imp = (population_imp - lag(population_imp))/lag(population_imp),
+    perc_bectuareal1ux_imp = (bectuareal1ux_imp - lag(bectuareal1ux_imp))/lag(bectuareal1ux_imp),
+    perc_population_imp_norm = (population_imp_norm - lag(population_imp_norm))/lag(population_imp_norm),
+    perc_bectuareal1ux_imp_norm = (bectuareal1ux_imp_norm - lag(bectuareal1ux_imp_norm))/lag(bectuareal1ux_imp_norm)
+  ) %>%
+  summarise(
+    mean_perc_population = mean(perc_population_imp, na.rm = TRUE),
+    mean_perc_bectuareal = mean(perc_bectuareal1ux_imp, na.rm = TRUE),
+    mean_perc_population_norm = mean(perc_population_imp_norm, na.rm = TRUE),
+    mean_perc_bectuareal_norm = mean(perc_bectuareal1ux_imp_norm, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    tercile_perc_population = ntile(mean_perc_population, 3),
+    tercile_perc_bectuareal = ntile(mean_perc_bectuareal, 3),
+    tercile_perc_population_norm = ntile(mean_perc_population_norm, 3),
+    tercile_perc_bectuareal_norm = ntile(mean_perc_bectuareal_norm, 3)
+  )
+ 
+gbmt_shp_interest <- map(
+  gbmt_interest$gbmt_fit_total,
+  ~ join_data_shp2(.x, shp_list)
+)
+```
+
+```{r}
+country_data <- map(shp_list, 1) %>% 
+  bind_rows() %>% 
+  mutate(
+    study = c(rep(TRUE, 10), rep(FALSE, 11))
+  )
+
+countries_by_study <- country_data %>% 
+  as_tibble() %>% 
+  select(GID_0, study)
+
+level1_data <- map(shp_list, 2) %>% 
+  bind_rows() %>% 
+  left_join(countries_by_study)
+```
+
+```{r}
+# country_data <- gbmt_shp_interest[[1]] %>%
+#   select(ISO2, country, shp_1) %>%
+#   unnest(cols = c(shp_1)) %>%
+#   st_as_sf()
+
+city_data <- gbmt_shp_interest[[1]] %>%
+  select(ISO2, country, shp_inner) %>%
+  unnest(cols = shp_inner) %>%
+  st_as_sf() %>%
+  st_centroid()
+```
+
+
+```{r}
+library(biscale)
+```
+
+```{r}
+city_data_biscale <- bi_class(city_data,
+  x = mean_perc_population,
+  y = mean_perc_bectuareal,
+  style = "quantile", dim = 3
+)
+
+city_data_biscale <- city_data_biscale %>% 
+  separate_wider_delim(
+    bi_class,
+    delim = "-",
+    names = c("X", "Y")
+  ) %>% 
+  mutate(
+    X = case_when(
+      mean_perc_population < 0 ~ 1,
+      .default = ntile(mean_perc_population, 2) + 1
+    )
+  ) %>% 
+  unite(
+    "bi_class",
+    X, Y,
+    sep = "-"
+  ) %>% 
+  st_as_sf()
+
+custom_pal <- c(
+  "1-1" = "#e1d9ea", # teal green for low x, low y
+  "2-1" = "#add8e6",
+  "3-1" = "#fbe6c6",
+  "1-2" = "#7a68a8",
+  "2-2" = "#6497b1",
+  "3-2" = "#e1623a",
+  "1-3" = "#220d5b",
+  "2-3" = "#005b96",
+  "3-3" = "#a42115"
+)
+
+ggmap <- level1_data %>%
+  ggplot() +
+  geom_sf(
+    aes(fill = study),
+    linewidth = 0.05
+  ) +
+  scale_fill_manual(
+    values = c("#bdbdbd", "#e5e5e5"),
+    guide = "none"
+  ) + 
+  geom_sf(
+    data = country_data,
+    linewidth = 0.35, 
+    color = "#3f3f3f",
+    fill = NA
+  ) +
+  geom_sf(
+    data = city_data_biscale,
+    mapping = aes(color = bi_class),
+    #color = "white", 
+    size = 2.5,
+    show.legend = FALSE
+  ) +
+  bi_scale_color(pal = custom_pal, dim = 3) +
+  # bi_scale_color(pal = "GrPink", dim = 3) +
+  bi_theme()
+
+legend <- bi_legend(
+  pal = custom_pal,
+  dim = 3,
+  xlab = "Higher Δ% Population",
+  ylab = "Higher Δ% Urban Area",
+  size = 5
+)
+
+x_range_map1 <- city_data_biscale %>% 
+  separate_wider_delim(
+    bi_class,
+    delim = "-",
+    names = c("X", "Y")
+  ) %>% 
+  group_by(X) %>% 
+  summarise(
+    min = min(mean_perc_population),
+    max = max(mean_perc_population)
+  ) %>% 
+  mutate(
+    across(
+      min:max,
+      scales::percent
+    ),
+    range = paste0("[", min, "; \n", max, "]")
+  ) 
+
+y_range_map1 <- city_data_biscale %>% 
+  separate_wider_delim(
+    bi_class,
+    delim = "-",
+    names = c("X", "Y")
+  ) %>% 
+  group_by(Y) %>% 
+  summarise(
+    min = min(mean_perc_bectuareal),
+    max = max(mean_perc_bectuareal)
+  ) %>% 
+  mutate(
+    across(
+      min:max,
+      scales::percent
+    ),
+    range = paste0("[", min, "; \n", max, "]")
+  ) 
+
+legend <- legend + 
+  scale_x_continuous(
+    labels = c(NA, x_range_map1$range, NA)
+  ) +
+  scale_y_continuous(
+    labels = c(NA, y_range_map1$range, NA)
+  ) + 
+  theme(
+    axis.text = element_text(),
+    axis.title.y = element_text(
+      margin = margin(r = 4)
+    ),
+    axis.title.x = element_text(
+      margin = margin(t = 4)
+    )
+  )
+
+library(cowplot)
+
+finalPlot <- ggdraw(ggmap) +
+  # draw_plot(ggmap, 0, 0, 1.5, 1.5) +
+  draw_plot(legend, 0.15, 0.25, 0.27, 0.27)
+
+ggsave("02_output/plots/delta_population_urban_area-3clusters.png",
+       finalPlot,
+       height = 7,
+       width = 7,
+       dpi = 600)
+```
