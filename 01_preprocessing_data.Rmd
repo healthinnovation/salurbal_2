@@ -82,6 +82,7 @@ Se adiciona la columna `SALID0` calculado como los 3 primeros dígitos de `SALID
 
 ```{r}
 bec_backcast_l1ux <- bec_backcast_l1ux %>%
+  filter(ISO2 != "NI") %>% 
   mutate(
     SALID0 = str_sub(SALID1, 1, 3),
     .before = SALID1
@@ -111,6 +112,7 @@ population <- st_read(
 
 ```{r}
 population <- population %>%
+  filter(country != "nicaragua") %>% 
   mutate(
     ISO2 = case_match(
       country,
