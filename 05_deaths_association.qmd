@@ -81,6 +81,7 @@ labelled::var_label(gbmt_log_merged) <- list(
 )
 ```
 
+
 # Tabla descriptiva
 
 ```{r}
@@ -235,7 +236,11 @@ gbmt_log_tab1 <- gbmt_log_merged %>%
       table1_descriptive
     )
   )
+```
 
+```{r}
+#| eval: false
+#| 
 walk2(
   gbmt_log_tab1$tab1,
   gbmt_log_tab1$ng,
@@ -246,17 +251,27 @@ walk2(
 )
 ```
 
+```{r}
+gbmt_log_tab1$tab1[[3]] %>% 
+  as_flex_table()
+```
+
+```{r}
+gbmt_log_tab1$tab1[[4]] %>% 
+  as_flex_table()
+```
+
 
 # Gráfico inicial de promedio de muertes
 
 ```{r}
 gbmt_log_merged %>% 
-  group_by(Clusters, group, YEAR) %>% 
+  filter(ng == 3) %>% 
+  group_by(group, YEAR) %>% 
   summarise(
     deaths_per_100k = mean(deaths_per_100k)
   ) %>% 
   ungroup() %>% 
-  filter(Clusters == 4) %>% 
   ggplot(aes(x = YEAR, y = deaths_per_100k, color = as.factor(group))) +
   geom_line(aes(group = group)) +
   geom_point() +
@@ -277,448 +292,375 @@ ggsave(
 )
 ```
 
-
-# Poisson - Modelo lineal mixto con Efectos Aleatorios 
-
-## Con efectos aleatorios 
-
-### Clusters: 3
-
-```{r}
-m1_poisson_w_re_3_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 3) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = poisson,
-    na.action = na.omit
-  )
-
-performance(m1_poisson_w_re_3_glmmTMB) %>% print_html()
-parameters(m1_poisson_w_re_3_glmmTMB) %>% print_html()
-parameters(m1_poisson_w_re_3_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m1_poisson_w_re_3_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m1_poisson_w_re_3_glmmTMB)
-check_collinearity(m1_poisson_w_re_3_glmmTMB)
-check_overdispersion(m1_poisson_w_re_3_glmmTMB)
-simulate_residuals(m1_poisson_w_re_3_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-### Clusters: 4
-
-```{r}
-m1_poisson_w_re_4_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 4) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = poisson,
-    na.action = na.omit
-  )
-
-performance(m1_poisson_w_re_4_glmmTMB) %>% print_html()
-parameters(m1_poisson_w_re_4_glmmTMB) %>% print_html()
-parameters(m1_poisson_w_re_4_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m1_poisson_w_re_4_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m1_poisson_w_re_4_glmmTMB)
-check_collinearity(m1_poisson_w_re_4_glmmTMB)
-check_overdispersion(m1_poisson_w_re_4_glmmTMB)
-simulate_residuals(m1_poisson_w_re_4_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-## Con efectos aleatorios (YEAR recodificado) 
-
-### Clusters: 3
-
-```{r}
-m2_poisson_w_re_3_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 3) %>% 
-  mutate(
-    YEAR = YEAR - 1996,
-    group = factor(group, levels = c(3, 1, 2))
-  ) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = poisson,
-    na.action = na.omit
-  )
-
-performance(m2_poisson_w_re_3_glmmTMB) %>% print_html()
-parameters(m2_poisson_w_re_3_glmmTMB) %>% print_html()
-parameters(m2_poisson_w_re_3_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m2_poisson_w_re_3_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m2_poisson_w_re_3_glmmTMB)
-check_collinearity(m2_poisson_w_re_3_glmmTMB)
-check_overdispersion(m2_poisson_w_re_3_glmmTMB)
-simulate_residuals(m2_poisson_w_re_3_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-### Clusters: 4
-
-```{r}
-m2_poisson_w_re_4_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 4) %>% 
-    mutate(
-    YEAR = YEAR - 1996,
-    group = factor(group, levels = c(4, 1, 2, 3))
-  ) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = poisson,
-    na.action = na.omit
-  )
-
-performance(m2_poisson_w_re_4_glmmTMB) %>% print_html()
-parameters(m2_poisson_w_re_4_glmmTMB) %>% print_html()
-parameters(m2_poisson_w_re_4_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m2_poisson_w_re_4_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m2_poisson_w_re_4_glmmTMB)
-check_collinearity(m2_poisson_w_re_4_glmmTMB)
-check_overdispersion(m2_poisson_w_re_4_glmmTMB)
-simulate_residuals(m2_poisson_w_re_4_glmmTMB) %>% 
-  check_residuals()
-```
-
-
 # Binomial Negativa - Modelo lineal mixto con Efectos Aleatorios 
 
-## Con efectos aleatorios 
-
-### Clusters: 3
+## Clusters: 3
 
 ```{r}
-m1_bn_w_re_3_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 3) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = nbinom2,
-    na.action = na.omit
-  )
-
-performance(m1_bn_w_re_3_glmmTMB) %>% print_html()
-parameters(m1_bn_w_re_3_glmmTMB) %>% print_html()
-parameters(m1_bn_w_re_3_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m1_bn_w_re_3_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m1_bn_w_re_3_glmmTMB)
-check_collinearity(m1_bn_w_re_3_glmmTMB)
-check_overdispersion(m1_bn_w_re_3_glmmTMB)
-simulate_residuals(m1_bn_w_re_3_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-### Clusters: 4
-
-```{r}
-m1_nb_w_re_4_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 4) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = nbinom2,
-    na.action = na.omit
-  )
-
-performance(m1_nb_w_re_4_glmmTMB) %>% print_html()
-parameters(m1_nb_w_re_4_glmmTMB) %>% print_html()
-parameters(m1_nb_w_re_4_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m1_nb_w_re_4_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    breaks = seq(1997, 2015, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m1_nb_w_re_4_glmmTMB)
-check_collinearity(m1_nb_w_re_4_glmmTMB)
-check_overdispersion(m1_nb_w_re_4_glmmTMB)
-simulate_residuals(m1_nb_w_re_4_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-## Con efectos aleatorios (YEAR recodificado) 
-
-### Clusters: 3
-
-```{r}
-m2_nb_w_re_3_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 3) %>% 
+gbmt_log_nbinom_c3 <- gbmt_log_merged %>% 
+  filter(
+    ng == 3,
+    Tier %in% c("Overall", "T1")
+  ) %>% 
   mutate(
     YEAR = YEAR - 1996,
-    group = factor(group, levels = c(3, 1, 2))
-  ) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = nbinom2,
-    na.action = na.omit
-  )
-
-performance(m2_nb_w_re_3_glmmTMB) %>% print_html()
-parameters(m2_nb_w_re_3_glmmTMB) %>% print_html()
-parameters(m2_nb_w_re_3_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-plot_model(m2_nb_w_re_3_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    labels = ~ .x + 1996,
-    breaks = seq(1, 19, 3)
-  ) +
-  theme_sjplot2()
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m2_nb_w_re_3_glmmTMB)
-check_collinearity(m2_nb_w_re_3_glmmTMB)
-check_overdispersion(m2_nb_w_re_3_glmmTMB)
-simulate_residuals(m2_nb_w_re_3_glmmTMB) %>% 
-  check_residuals() 
-```
-
-
-### Clusters: 4
-
-```{r}
-m2_nb_w_re_4_glmmTMB <- gbmt_log_merged %>%
-  filter(Clusters == 4) %>% 
-    mutate(
-    YEAR = YEAR - 1996,
-    group = factor(group, levels = c(3, 1, 2, 4))
-  ) %>% 
-  glmmTMB(
-    deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
-    data = .,
-    family = nbinom2,
-    na.action = na.omit
-  )
-
-performance(m2_nb_w_re_4_glmmTMB) %>% print_html()
-parameters(m2_nb_w_re_4_glmmTMB) %>% print_html()
-parameters(m2_nb_w_re_4_glmmTMB, exponentiate = TRUE) %>% print_html()
-
-
-m2_nb_w_re_4_glmmTMB_plot1 <- plot_model(m2_nb_w_re_4_glmmTMB, type = "pred",
-           terms = c("YEAR",
-                     "group")) +
-  geom_line(linewidth = 1.2) +
-  labs(
-    y = "Deaths",
-    x = "Year",
-    color = "Cluster"
-  )  + 
-  scale_x_continuous(
-    labels = ~ .x + 1996,
-    breaks = seq(1, 19, 3)
-  ) +
-  labs(
-    title = "Deaths per 100,000 inhabitants by Cluster",
-     x = NULL, y = NULL, color = "Cluster", fill = "Cluster"
-  ) +
-  theme_sjplot2()
-
-m2_nb_w_re_4_glmmTMB_plot1
-
-plot_model(m2_nb_w_re_4_glmmTMB, type = "pred", 
-           terms = c("group")) +
-  theme_sjplot2()
-```
-
-
-```{r} 
-#| eval: false
-ggsave(
-  filename = "02_output/plots/muertos_nb_cluster4.png",
-  plot = m2_nb_w_re_4_glmmTMB_plot1,
-  dpi = 300,
-  bg = "white",
-  width = 7.5,
-  height = 5
-)
-```
-
-Diagnóstico de supuestos del modelo:
-
-```{r}
-check_autocorrelation(m2_nb_w_re_4_glmmTMB)
-check_collinearity(m2_nb_w_re_4_glmmTMB)
-check_overdispersion(m2_nb_w_re_4_glmmTMB)
-simulate_residuals(m2_nb_w_re_4_glmmTMB) %>% 
-  check_residuals()
-```
-
-
-
-
-Ingreso de los valores predictivos para los modelos de 3 y 4 clústers:
-
-```{r}
-library(broom.mixed)
-
-gbmt_log_merged4 <- gbmt_log_merged %>% 
-  filter(Clusters == 4) %>% 
-  augment(m2_nb_w_re_4_glmmTMB, data = ., type.predict = "response")
-
-gbmt_log_merged4 <- gbmt_log_merged4 %>% 
+    GTHGROUP = factor(
+      GTHGROUP,
+      labels = c(
+        "Overall",
+        "Communicable, maternal, perinatal and nutritional conditions",
+        "Injuries",
+        "Noncommunicable diseases"
+      )
+    )
+  ) %>%     
+  group_nest(GTHGROUP) %>% 
   mutate(
-    predicted_deaths_100k = .fitted / population_imp * 100000,
-    # Calcula los intervalos de confianza para cada predicción
-    lower_ci = (.fitted - 1.96 * .se.fit) / population_imp * 100000,
-    upper_ci = (.fitted + 1.96 * .se.fit) / population_imp * 100000
+    nbinom_model = map(
+      data,
+      ~ glmmTMB(
+        deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
+        data = .x,
+        family = nbinom2,
+        na.action = na.omit
+      )
+    )
+  )
+  
+gbmt_log_nbinom_c3 <- gbmt_log_nbinom_c3 %>% 
+  mutate(
+    performance = map(nbinom_model, performance),
+    parameters = map(nbinom_model, parameters),
+    parameters_exp = map(nbinom_model, ~ parameters(.x, exponentiate = TRUE)),
+    plot_pred = map(
+      nbinom_model,
+      ~ plot_model(.x, type = "pred",
+           terms = c("YEAR",
+                     "group")) +
+        geom_line(linewidth = 1.2) +
+        labs(
+          y = "Deaths",
+          x = "Year",
+          color = "Cluster"
+        )  + 
+        scale_x_continuous(
+          labels = ~ .x + 1996,
+          breaks = seq(1, 19, 3)
+        ) +
+        theme_sjplot2()
+    )
   )
 ```
 
+::: {.panel-tabset}
+
+## Overall
+
+### Exponential results:
 
 ```{r}
-#| dpi: 300
-#| fig-width: 7
-#| fig-height: 4.5
-
-plot_binomialoffset_g <- gbmt_log_merged4 %>% 
-  ggplot(aes(x = YEAR, 
-           y = predicted_deaths_100k,
-           color = group)) + 
-  geom_point(aes(y = deaths_per_100k), alpha = 0.5,
-             position = position_jitter(h = 0.2)) +  # Datos observados
-  geom_line(aes(group = SALID1)) +
-  labs(
-    title = "Deaths per 100,000 inhabitants by Cluster",
-     x = NULL, y = NULL, color = "Cluster", fill = "Cluster"
-  ) +
-  facet_grid(vars(Clusters), vars(group)) +
-  scale_color_brewer(palette = "Set1") +
-  # facet_wrap(vars(Clusters)) +
-  theme_minimal()
-
-plot_binomialoffset_g
+#| echo: false
+gbmt_log_nbinom_c3$parameters_exp[[1]]
 ```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$plot_pred[[1]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$performance[[1]]
+```
+
+## Communicable, maternal, etc.
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$parameters_exp[[2]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$plot_pred[[2]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$performance[[2]]
+```
+
+## Injuries
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$parameters_exp[[3]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$plot_pred[[3]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$performance[[3]]
+```
+
+## Noncommunicable diseases
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$parameters_exp[[4]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$plot_pred[[4]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c3$performance[[4]]
+```
+
+:::
+
+
+## Clusters: 4
+
+```{r}
+gbmt_log_nbinom_c4 <- gbmt_log_merged %>% 
+  filter(
+    ng == 4,
+    Tier %in% c("Overall", "T1")
+  ) %>% 
+  mutate(
+    YEAR = YEAR - 1996,
+    GTHGROUP = factor(
+      GTHGROUP,
+      labels = c(
+        "Overall",
+        "Communicable, maternal, perinatal and nutritional conditions",
+        "Injuries",
+        "Noncommunicable diseases"
+      )
+    )
+  ) %>%     
+  group_nest(GTHGROUP) %>% 
+  mutate(
+    nbinom_model = map(
+      data,
+      ~ glmmTMB(
+        deaths ~ YEAR * group + (1|SALID1) + offset(population_imp_log),
+        data = .x,
+        family = nbinom2,
+        na.action = na.omit
+      )
+    )
+  )
+  
+gbmt_log_nbinom_c4 <- gbmt_log_nbinom_c4 %>% 
+  mutate(
+    performance = map(nbinom_model, performance),
+    parameters = map(nbinom_model, parameters),
+    parameters_exp = map(nbinom_model, ~ parameters(.x, exponentiate = TRUE)),
+    plot_pred = map(
+      nbinom_model,
+      ~ plot_model(.x, type = "pred",
+           terms = c("YEAR",
+                     "group")) +
+        geom_line(linewidth = 1.2) +
+        labs(
+          y = "Deaths",
+          x = "Year",
+          color = "Cluster"
+        )  + 
+        scale_x_continuous(
+          labels = ~ .x + 1996,
+          breaks = seq(1, 19, 3)
+        ) +
+        theme_sjplot2()
+    )
+  )
+```
+
+::: {.panel-tabset}
+
+## Overall
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$parameters_exp[[1]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$plot_pred[[1]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$performance[[1]]
+```
+
+## Communicable, maternal, etc.
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$parameters_exp[[2]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$plot_pred[[2]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$performance[[2]]
+```
+
+## Injuries
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$parameters_exp[[3]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$plot_pred[[3]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$performance[[3]]
+```
+
+## Noncommunicable diseases
+
+### Exponential results:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$parameters_exp[[4]]
+```
+
+### Plots:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$plot_pred[[4]]
+```
+
+### Performance:
+
+```{r}
+#| echo: false
+gbmt_log_nbinom_c4$performance[[4]]
+```
+
+:::
+
+
+
+
+<!-- <!--  -->
+<!-- Diagnóstico de supuestos del modelo: -->
+
+<!-- ```{r} -->
+<!-- check_autocorrelation(m1_bn_w_re_3_glmmTMB) -->
+<!-- check_collinearity(m1_bn_w_re_3_glmmTMB) -->
+<!-- check_overdispersion(m1_bn_w_re_3_glmmTMB) -->
+<!-- simulate_residuals(m1_bn_w_re_3_glmmTMB) %>%  -->
+<!--   check_residuals() -->
+<!-- ``` --> -->
+
+
+<!-- <!--  -->
+<!-- Ingreso de los valores predictivos para los modelos de 3 y 4 clústers: -->
+
+<!-- ```{r} -->
+<!-- library(broom.mixed) -->
+
+<!-- gbmt_log_merged4 <- gbmt_log_merged %>%  -->
+<!--   filter(Clusters == 4) %>%  -->
+<!--   augment(m2_nb_w_re_4_glmmTMB, data = ., type.predict = "response") -->
+
+<!-- gbmt_log_merged4 <- gbmt_log_merged4 %>%  -->
+<!--   mutate( -->
+<!--     predicted_deaths_100k = .fitted / population_imp * 100000, -->
+<!--     # Calcula los intervalos de confianza para cada predicción -->
+<!--     lower_ci = (.fitted - 1.96 * .se.fit) / population_imp * 100000, -->
+<!--     upper_ci = (.fitted + 1.96 * .se.fit) / population_imp * 100000 -->
+<!--   ) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #| dpi: 300 -->
+<!-- #| fig-width: 7 -->
+<!-- #| fig-height: 4.5 -->
+
+<!-- plot_binomialoffset_g <- gbmt_log_merged4 %>%  -->
+<!--   ggplot(aes(x = YEAR,  -->
+<!--            y = predicted_deaths_100k, -->
+<!--            color = group)) +  -->
+<!--   geom_point(aes(y = deaths_per_100k), alpha = 0.5, -->
+<!--              position = position_jitter(h = 0.2)) +  # Datos observados -->
+<!--   geom_line(aes(group = SALID1)) + -->
+<!--   labs( -->
+<!--     title = "Deaths per 100,000 inhabitants by Cluster", -->
+<!--      x = NULL, y = NULL, color = "Cluster", fill = "Cluster" -->
+<!--   ) + -->
+<!--   facet_grid(vars(Clusters), vars(group)) + -->
+<!--   scale_color_brewer(palette = "Set1") + -->
+<!--   # facet_wrap(vars(Clusters)) + -->
+<!--   theme_minimal() -->
+
+<!-- plot_binomialoffset_g -->
+<!-- ``` --> -->
 
 
 # Mapa
@@ -788,10 +730,9 @@ get_shp <- function(ISO2) {
   )
 }
 
-
 shp_list <- unique(gbmt_fit_final$gbmt_fit_total[[1]]$ISO2) %>%
   append(
-    c("GUY", "SUR", "BOL", "PRY",
+    c("NI", "GUY", "SUR", "BOL", "PRY",
       "URY", "ECU", "BLZ", "HND",
       "TTO", "VEN")
   ) %>% 
@@ -831,7 +772,7 @@ join_data_shp3 <- function(data, shp_list) {
 
 ```{r}
 gbmt_interest_deaths <- gbmt_log_merged %>% 
-  filter(Clusters == 4) %>% 
+  filter(ng == 4, Tier == "Overall") %>% 
   group_by(
     across(c(ISO2:SALID1, group))
   ) %>% 
@@ -857,7 +798,7 @@ city_data_deaths <- gbmt_interest_deaths_shp[[1]] %>%
 country_data <- map(shp_list, 1) %>% 
   bind_rows() %>% 
   mutate(
-    study = c(rep(TRUE, 11), rep(FALSE, 10))
+    study = c(rep(TRUE, 10), rep(FALSE, 11))
   )
 
 countries_by_study <- country_data %>% 
@@ -1034,8 +975,10 @@ city_data_deaths_biscale %>%
     y = "Cuartil de Mortalidad"
   ) +
   theme_minimal()
-  
+```
 
+```{r}
+#| eval: false
 ggsave("02_output/plots/Distribución mortalidad y cluster.png",
        dpi = 300,
        bg = "white",
@@ -1134,7 +1077,8 @@ gg_stacked_bar <- function(datos) {
     theme(axis.text.x = element_text(angle = 20, hjust = 1))
 }
 
-stacked_bar <- gbmt_log_4 %>% 
+stacked_bar <- gbmt_log_merged %>% 
+  filter(ng == 4, Tier == "Overall") %>% 
   gg_stacked_bar()
 ```
 
