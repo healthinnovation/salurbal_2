@@ -35,6 +35,7 @@ library(multidplyr)
 
 ```{r}
 pop_bectuareal <- readRDS("01_data/processed/pop_bectuareal1ux.rds")
+city_info <- readRDS("01_data/processed/city_info.rds")
 ```
 
 # Formateo de datos
@@ -280,24 +281,20 @@ saveRDS(gbmt_fit_final,
 
 La estructura en este punto estaría quedando así:
 
-```{=html}
-<!-- r$> gbmt_fit_final
-# A tibble: 55 × 19
-       d    ng scale scale_name      data_gbmt x_names gbmt_out     AIC     BIC
-   <dbl> <int> <dbl> <chr>           <list>    <list>  <list>     <dbl>   <dbl>
- 1     2     1     2 standardization <tibble>  <chr>   <gbmt>    17505.  17567.
- 2     2     1     2 standardization <tibble>  <chr>   <gbmt>    74488.  74522.
- 3     2     1     2 standardization <tibble>  <chr>   <gbmt>     1152.   1175.
- 4     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>    -9232.  -9176.
- 5     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>   -17366. -17332.
- 6     2     1     4 logarithmic     <tibble>  <chr>   <gbmt>     1412.   1441.
- 7     2     2     2 standardization <tibble>  <chr>   <gbmt>     8300.   8432.
- 8     2     2     2 standardization <tibble>  <chr>   <gbmt>    51364.  51439.
- 9     2     2     2 standardization <tibble>  <chr>   <gbmt>    -5597.  -5530.
-10     2     2     4 logarithmic     <tibble>  <chr>   <gbmt>   -21104. -20993.
-# ℹ 45 more rows
-# ℹ 10 more variables: L <dbl>, APPA <dbl>, Mismatch <dbl>, SD_GMP <dbl>,
-#   OCC <dbl>, smallest_group <dbl>, city_info <list>,
-#   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list>
-# ℹ Use `print(n = ...)` to see more rows -->
-```
+<!-- > gbmt_fit_final
+# A tibble: 10 × 19
+       d    ng scale scale_name  data_gbmt x_names   gbmt_out     AIC
+   <dbl> <int> <dbl> <chr>       <list>    <list>    <list>     <dbl>
+ 1     2     1     4 logarithmic <tibble>  <chr [2]> <gbmt>   -10734.
+ 2     2     2     4 logarithmic <tibble>  <chr [2]> <gbmt>   -23777.
+ 3     2     3     4 logarithmic <tibble>  <chr [2]> <gbmt>   -32196.
+ 4     2     4     4 logarithmic <tibble>  <chr [2]> <gbmt>   -34145.
+ 5     2     5     4 logarithmic <tibble>  <chr [2]> <gbmt>   -38506.
+ 6     2     6     4 logarithmic <tibble>  <chr [2]> <gbmt>   -41522.
+ 7     2     7     4 logarithmic <tibble>  <chr [2]> <gbmt>   -42083.
+ 8     2     8     4 logarithmic <tibble>  <chr [2]> <gbmt>   -42336.
+ 9     2     9     4 logarithmic <tibble>  <chr [2]> <gbmt>   -43470.
+10     2    10     4 logarithmic <tibble>  <chr [2]> <gbmt>   -44333.
+# ℹ 11 more variables: BIC <dbl>, L <dbl>, APPA <dbl>, Mismatch <dbl>,
+#   SD_GMP <dbl>, OCC <dbl>, smallest_group <dbl>, city_info <list>,
+#   data_gbmt_extract <list>, assign_list <list>, gbmt_fit_total <list> -->
