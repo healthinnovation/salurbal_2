@@ -312,6 +312,10 @@ gbmt_log_nbinom_c3 <- gbmt_log_merged %>%
         "Injuries",
         "Noncommunicable diseases"
       )
+    ),
+    group = factor(
+      group,
+      levels = c(3, 1, 2)
     )
   ) %>%     
   group_nest(GTHGROUP) %>% 
@@ -330,8 +334,13 @@ gbmt_log_nbinom_c3 <- gbmt_log_merged %>%
 gbmt_log_nbinom_c3 <- gbmt_log_nbinom_c3 %>% 
   mutate(
     performance = map(nbinom_model, performance),
-    parameters = map(nbinom_model, parameters),
-    parameters_exp = map(nbinom_model, ~ parameters(.x, exponentiate = TRUE)),
+    parameters = map(nbinom_model, 
+                     ~ parameters(.x, digits = 3, 
+                                  ci_digits = 3)),
+    parameters_exp = map(nbinom_model, ~ parameters(.x, 
+                                                    digits = 3, 
+                                                    ci_digits = 3,
+                                                    exponentiate = TRUE)),
     plot_pred = map(
       nbinom_model,
       ~ plot_model(.x, type = "pred",
@@ -467,6 +476,10 @@ gbmt_log_nbinom_c4 <- gbmt_log_merged %>%
         "Injuries",
         "Noncommunicable diseases"
       )
+    ),
+    group = factor(
+      group,
+      levels = c(4, 1, 2, 3)
     )
   ) %>%     
   group_nest(GTHGROUP) %>% 
@@ -485,8 +498,13 @@ gbmt_log_nbinom_c4 <- gbmt_log_merged %>%
 gbmt_log_nbinom_c4 <- gbmt_log_nbinom_c4 %>% 
   mutate(
     performance = map(nbinom_model, performance),
-    parameters = map(nbinom_model, parameters),
-    parameters_exp = map(nbinom_model, ~ parameters(.x, exponentiate = TRUE)),
+    parameters = map(nbinom_model, 
+                     ~ parameters(.x, digits = 3, 
+                                  ci_digits = 3)),
+    parameters_exp = map(nbinom_model, ~ parameters(.x, 
+                                                    digits = 3, 
+                                                    ci_digits = 3,
+                                                    exponentiate = TRUE)),
     plot_pred = map(
       nbinom_model,
       ~ plot_model(.x, type = "pred",
@@ -1083,6 +1101,9 @@ stacked_bar <- gbmt_log_merged %>%
 ```
 
 ```{r}
+#| fig-height: 7
+#| fig-width: 15
+#| 
 library(patchwork)
 
 map_stacked <- ggmap2 + stacked_bar
